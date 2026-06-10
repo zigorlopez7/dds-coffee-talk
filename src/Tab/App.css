@@ -1,0 +1,313 @@
+:root {
+  --dehn-red: #e3000b;
+  --dehn-red-dark: #b50009;
+  --dehn-offwhite: #f9f8f6;
+  --dehn-black: #1f1f1e;
+  --dehn-grey: #5b5b5d;
+  --dehn-border: #dedede;
+  --dehn-green: #015b6b;
+  --dehn-green-dark: #014754;
+  --dehn-anthrazit: #30414f;
+
+  --dehn-success: #00993d;
+  --dehn-warning: #febc39;
+  --dehn-danger: #a4130e;
+  --dehn-info: #02c3e5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--dehn-offwhite);
+}
+
+.appShell {
+  min-height: 100vh;
+  padding: 32px;
+  background: var(--dehn-offwhite);
+  color: var(--dehn-black);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.card {
+  max-width: 1040px;
+  margin: 0 auto;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 32px;
+  box-shadow: 0 8px 28px rgba(31, 31, 30, 0.1);
+}
+
+.hero {
+  background: linear-gradient(135deg, var(--dehn-red), var(--dehn-red-dark));
+  color: #ffffff;
+  padding: 32px;
+  border-radius: 16px;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  margin: 0 0 8px;
+  opacity: 0.9;
+}
+
+h1 {
+  font-size: 36px;
+  line-height: 1.1;
+  margin: 0 0 12px;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 22px;
+}
+
+h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 720px;
+  font-size: 16px;
+  line-height: 1.5;
+  opacity: 0.95;
+}
+
+.statusBox {
+  background: #ffffff;
+  border: 1px solid var(--dehn-border);
+  border-left: 6px solid var(--dehn-red);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 24px 0;
+}
+
+.statusBox strong {
+  color: var(--dehn-red);
+}
+
+.statusBox p {
+  margin: 6px 0 0;
+  color: var(--dehn-black);
+}
+
+.section {
+  border-top: 1px solid var(--dehn-border);
+  padding-top: 24px;
+  margin-top: 24px;
+}
+
+.muted {
+  color: var(--dehn-grey);
+  line-height: 1.5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--dehn-black);
+}
+
+input {
+  padding: 11px 12px;
+  border: 1px solid #cfcfcf;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--dehn-black);
+  background: #ffffff;
+}
+
+input:focus {
+  outline: 3px solid rgba(227, 0, 11, 0.18);
+  border-color: var(--dehn-red);
+}
+
+.actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-weight: 800;
+  font-size: 14px;
+  transition: transform 0.08s ease, background 0.12s ease, opacity 0.12s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+}
+
+.primaryButton {
+  background: var(--dehn-red);
+  color: #ffffff;
+}
+
+.primaryButton:hover {
+  background: var(--dehn-red-dark);
+}
+
+.secondaryButton {
+  background: var(--dehn-green);
+  color: #ffffff;
+}
+
+.secondaryButton:hover {
+  background: var(--dehn-green-dark);
+}
+
+.list {
+  margin-top: 16px;
+  padding-left: 0;
+  list-style: none;
+  border: 1px solid var(--dehn-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--dehn-border);
+  background: #ffffff;
+}
+
+.list li:last-child {
+  border-bottom: none;
+}
+
+.list span {
+  color: var(--dehn-grey);
+}
+
+.meetingList {
+  display: grid;
+  gap: 16px;
+}
+
+.meetingCard {
+  background: #ffffff;
+  border: 1px solid var(--dehn-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.meetingCard > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.meetingCard ul {
+  margin-bottom: 0;
+}
+
+.meetingCard a {
+  color: var(--dehn-red);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.meetingCard a:hover {
+  text-decoration: underline;
+}
+
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #eeeeee;
+  color: var(--dehn-grey);
+}
+
+.pill.created {
+  background: #ddf4e3;
+  color: var(--dehn-success);
+}
+
+.pill.failed {
+  background: #ffe8e8;
+  color: var(--dehn-danger);
+}
+
+.pill.pending_graph,
+.pill.planned {
+  background: #fff3d6;
+  color: #8a5a00;
+}
+
+.debugBox {
+  margin-top: 24px;
+  border-top: 1px solid var(--dehn-border);
+  padding-top: 16px;
+}
+
+pre {
+  background: var(--dehn-anthrazit);
+  color: #f4f4f4;
+  padding: 12px;
+  border-radius: 10px;
+  overflow: auto;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .appShell {
+    padding: 16px;
+  }
+
+  .card {
+    padding: 20px;
+  }
+
+  .hero {
+    padding: 24px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .list li,
+  .meetingCard > div {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

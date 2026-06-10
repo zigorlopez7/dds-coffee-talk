@@ -40,6 +40,18 @@ export default function App() {
 
         setTeamsContext(context);
         setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
+
+        if (context.page.frameContext === teamsJs.FrameContexts.settings) {
+          teamsJs.pages.config.setValidityState(true);
+          teamsJs.pages.config.registerOnSaveHandler((saveEvent) => {
+            teamsJs.pages.config.setConfig({
+              suggestedDisplayName: "DDS Coffee Talk",
+              contentUrl: `${window.location.origin}/tabs/home`,
+              websiteUrl: `${window.location.origin}/tabs/home`,
+            });
+            saveEvent.notifySuccess();
+          });
+        }
       } catch (error) {
         console.error(error);
         setMessage("Salute. Running outside Teams or Teams SDK failed.");

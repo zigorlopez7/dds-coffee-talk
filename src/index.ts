@@ -118,9 +118,13 @@ async function areParticipantsFree(
   participants: ChannelMember[],
   startDateTime: string,
   endDateTime: string,
-  timeZone: string
+  timeZone: string,
+  durationMinutes: number
 ): Promise<boolean> {
   const organizer = participants[0];
+
+  // availabilityViewInterval must be between 5 and 1440 AND strictly less than the window length
+  const availabilityViewInterval = Math.max(5, Math.floor(durationMinutes / 2));
 
   const result = await graphClient
     .api(`/users/${organizer.userId}/calendar/getSchedule`)
@@ -134,7 +138,7 @@ async function areParticipantsFree(
         dateTime: endDateTime,
         timeZone,
       },
-      availabilityViewInterval: 30,
+      availabilityViewInterval,
     });
 
   return result.value.every((schedule: any) => {
@@ -170,7 +174,8 @@ async function findAvailableSlot(
         participants,
         startDateTime,
         endDateTime,
-        timeZone
+        timeZone,
+        durationMinutes
       );
 
       if (free) {
@@ -425,7 +430,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         participants,
         startGraph,
         endGraph,
-        tz
+        tz,
+        Number(durationMinutes)
       );
 
       if (!free) {

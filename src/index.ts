@@ -76,15 +76,41 @@ async function loadChannelMembers(
 ): Promise<ChannelMember[]> {
   const result = await graphClient
     .api(`/teams/${teamId}/channels/${channelId}/members`)
-    .select("displayName,email,userId")
     .get();
 
-  return result.value.map((m: any) => ({
-    id: m.id,
-    userId: m.userId,
-    displayName: m.displayName,
-    email: m.email,
-  }));
+  console.log("Raw channel members:", JSON.stringify(result.value, null, 2));
+
+  const members: ChannelMember[] = [];
+
+  for (const member of result.value) {
+    const userId = member.userId;
+
+    let email: string | undefined;
+    let displayName = member.displayName || "Unnamed user";
+
+    if (userId) {
+      try {
+        const user = await graphClient
+          .api(`/users/${userId}`)
+          .select("id,displayName,mail,userPrincipalName")
+          .get();
+
+        displayName = user.displayName || displayName;
+        email = user.mail || user.userPrincipalName;
+      } catch (error) {
+        console.warn(`Could not load user details for ${displayName}`, error);
+      }
+    }
+
+    members.push({
+      id: member.id,
+      userId,
+      displayName,
+      email,
+    });
+  }
+
+  return members;
 }
 
 async function areParticipantsFree(

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import * as teamsJs from "@microsoft/teams-js";
 
 import "./App.css";
@@ -37,6 +37,19 @@ export default function App() {
       try {
         await teamsJs.app.initialize();
         const context = await teamsJs.app.getContext();
+
+        if (context.page.frameContext === teamsJs.FrameContexts.settings) {
+          teamsJs.pages.config.registerOnSaveHandler((saveEvent) => {
+            teamsJs.pages.config.setConfig({
+              suggestedDisplayName: "DDS Coffee Talk",
+              contentUrl: `${window.location.origin}/tabs/home`,
+            });
+            saveEvent.notifySuccess();
+          });
+          teamsJs.pages.config.setValidityState(true);
+          setMessage("Click Save to add DDS Coffee Talk to this channel.");
+          return;
+        }
 
         setTeamsContext(context);
         setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);

@@ -206,10 +206,12 @@ export default function App() {
           </div>
         </header>
 
-        <section className="statusBox">
-          <strong>Status</strong>
-          <p>{message}</p>
-        </section>
+        {message && (
+          <section className="statusBox">
+            <strong>Status</strong>
+            <p>{message}</p>
+          </section>
+        )}
 
         <section className="section">
           <h2>Channel users</h2>

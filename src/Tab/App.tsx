@@ -119,7 +119,40 @@ export default function App() {
     }
   }
 
+  const MOCK_MEETINGS: Meeting[] = [
+    {
+      subject: "DDS Coffee Talk #1",
+      status: "created",
+      message: "Meeting created.",
+      startDateTime: new Date(Date.now() + 86400000).toISOString(),
+      endDateTime: new Date(Date.now() + 86400000 + 1800000).toISOString(),
+      webLink: "#",
+      participants: [
+        { displayName: "Rasciel Villegas", email: "rasciel.villegas@dehn.de" },
+        { displayName: "Jose Ruano Fernández", email: "Jose.Ruano@dehn.de" },
+        { displayName: "Borja Giráldez González", email: "borja.giraldez@dehn.de" },
+      ],
+    },
+    {
+      subject: "DDS Coffee Talk #2",
+      status: "created",
+      message: "Meeting created.",
+      startDateTime: new Date(Date.now() + 172800000).toISOString(),
+      endDateTime: new Date(Date.now() + 172800000 + 1800000).toISOString(),
+      webLink: "#",
+      participants: [
+        { displayName: "Alberto García Reino", email: "Alberto.Reino@dehn.de" },
+        { displayName: "Zigor López", email: "Zigor.Lopez@dehn.de" },
+      ],
+    },
+  ];
+
   async function createMeetingsNow() {
+    // TODO: remove mock
+    setMessage("Mock meetings loaded.");
+    setMeetings(MOCK_MEETINGS);
+    return;
+
     try {
       setLoadingNow(true);
       setMessage("Preparing random meetings based on availability...");
@@ -143,6 +176,8 @@ export default function App() {
       });
 
       const data = await response.json();
+
+      console.log('DATA: ', data)
 
       setMessage(data.message);
       setMeetings(data.meetings || []);
@@ -222,14 +257,14 @@ export default function App() {
           </button>
 
           {members.length > 0 && (
-            <ul className="list">
+            <div className="userGrid">
               {members.map((member, index) => (
-                <li key={member.userId || member.id || index}>
+                <div key={member.userId || member.id || index} className="userCard">
                   <strong>{member.displayName}</strong>
                   {member.email && <span>{member.email}</span>}
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </section>
 
@@ -333,7 +368,7 @@ export default function App() {
             <div className="meetingList">
               {meetings.map((meeting, index) => (
                 <article className="meetingCard" key={index}>
-                  <div>
+                  <div className="meetingCardHeader">
                     <strong>{meeting.subject}</strong>
                     <span className={`pill ${meeting.status}`}>
                       {meeting.status}
@@ -348,13 +383,14 @@ export default function App() {
                     </p>
                   )}
 
-                  <ul>
+                  <div className="userGrid">
                     {meeting.participants.map((participant, i) => (
-                      <li key={participant.userId || participant.email || i}>
-                        {participant.displayName}
-                      </li>
+                      <div key={participant.userId || participant.email || i} className="userCard">
+                        <strong>{participant.displayName}</strong>
+                        {participant.email && <span>{participant.email}</span>}
+                      </div>
                     ))}
-                  </ul>
+                  </div>
 
                   {meeting.webLink && (
                     <a href={meeting.webLink} target="_blank" rel="noreferrer">

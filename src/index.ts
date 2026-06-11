@@ -202,7 +202,7 @@ async function createCalendarEvent(
   timeZone: string,
   organizerEmail: string
 ) {
-  const attendees = participants.slice(1).map((p) => ({
+  const attendees = participants.map((p) => ({
     emailAddress: {
       address: p.email,
       name: p.displayName,

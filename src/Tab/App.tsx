@@ -32,6 +32,10 @@ export default function App() {
   const [startDateTime, setStartDateTime] = useState("");
   const [timeZone, setTimeZone] = useState("Europe/Madrid");
 
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [loadingNow, setLoadingNow] = useState(false);
+  const [loadingAtTime, setLoadingAtTime] = useState(false);
+
   function formatDateTime(dateTimeString?: string) {
     if (!dateTimeString) return "";
 
@@ -88,6 +92,7 @@ export default function App() {
 
   async function loadChannelMembers() {
     try {
+      setLoadingMembers(true);
       setMessage("Checking Graph access and loading channel users...");
       setMembers([]);
 
@@ -108,11 +113,14 @@ export default function App() {
     } catch (error) {
       console.error(error);
       setMessage("Could not load channel users. Check console.");
+    } finally {
+      setLoadingMembers(false);
     }
   }
 
   async function createMeetingsNow() {
     try {
+      setLoadingNow(true);
       setMessage("Preparing random meetings based on availability...");
       setMeetings([]);
 
@@ -140,11 +148,14 @@ export default function App() {
     } catch (error) {
       console.error(error);
       setMessage("Could not create meetings. Check console.");
+    } finally {
+      setLoadingNow(false);
     }
   }
 
   async function createMeetingsAtTime() {
     try {
+      setLoadingAtTime(true);
       setMessage("Preparing random meetings at the selected time...");
       setMeetings([]);
 
@@ -173,6 +184,8 @@ export default function App() {
     } catch (error) {
       console.error(error);
       setMessage("Could not create meetings at the selected time. Check console.");
+    } finally {
+      setLoadingAtTime(false);
     }
   }
 
@@ -205,7 +218,8 @@ export default function App() {
             This checks whether Graph access is configured. Until then, it will show the pending message.
           </p>
 
-          <button className="primaryButton" onClick={loadChannelMembers}>
+          <button className="primaryButton" onClick={loadChannelMembers} disabled={loadingMembers}>
+            {loadingMembers && <span className="spinner" />}
             Show channel users
           </button>
 
@@ -267,7 +281,8 @@ export default function App() {
           </div>
 
           <div className="actions">
-            <button className="primaryButton" onClick={createMeetingsNow}>
+            <button className="primaryButton" onClick={createMeetingsNow} disabled={loadingNow}>
+              {loadingNow && <span className="spinner" />}
               Create random meetings now
             </button>
           </div>
@@ -289,8 +304,9 @@ export default function App() {
             <button
               className="secondaryButton"
               onClick={createMeetingsAtTime}
-              disabled={!startDateTime}
+              disabled={!startDateTime || loadingAtTime}
             >
+              {loadingAtTime && <span className="spinner" />}
               Create random meetings at selected time
             </button>
           </div>

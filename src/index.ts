@@ -123,36 +123,30 @@ async function loadChannelMembers(
   );
 }
 
-async function areParticipantsFree(
+async function getAvailableParticipants(
   graphClient: Client,
   participants: ChannelMember[],
   startDateTime: string,
   endDateTime: string,
   timeZone: string,
   durationMinutes: number
-): Promise<boolean> {
-  const organizer = participants[0];
+): Promise<ChannelMember[]> {
+  const caller = participants.find((p) => p.userId) ?? participants[0];
 
-  // availabilityViewInterval must be between 5 and 1440 AND strictly less than the window length
   const availabilityViewInterval = Math.max(5, Math.floor(durationMinutes / 2));
 
   const result = await graphClient
-    .api(`/users/${organizer.userId}/calendar/getSchedule`)
+    .api(`/users/${caller.userId}/calendar/getSchedule`)
     .post({
       schedules: participants.map((p) => p.email),
-      startTime: {
-        dateTime: startDateTime,
-        timeZone,
-      },
-      endTime: {
-        dateTime: endDateTime,
-        timeZone,
-      },
+      startTime: { dateTime: startDateTime, timeZone },
+      endTime: { dateTime: endDateTime, timeZone },
       availabilityViewInterval,
     });
 
-  return result.value.every((schedule: any) => {
-    return !schedule.scheduleItems || schedule.scheduleItems.length === 0;
+  return participants.filter((_, i) => {
+    const schedule = result.value[i];
+    return !schedule?.scheduleItems || schedule.scheduleItems.length === 0;
   });
 }
 
@@ -161,7 +155,7 @@ async function findAvailableSlot(
   participants: ChannelMember[],
   durationMinutes: number,
   timeZone: string
-): Promise<{ startDateTime: string; endDateTime: string } | null> {
+): Promise<{ startDateTime: string; endDateTime: string; availableParticipants: ChannelMember[] } | null> {
   const { start, end } = buildSearchWindowFromNow();
 
   let cursor = new Date(start);
@@ -178,7 +172,7 @@ async function findAvailableSlot(
       const startDateTime = toGraphDateTime(cursor, timeZone);
       const endDateTime = toGraphDateTime(slotEnd, timeZone);
 
-      const free = await areParticipantsFree(
+      const availableParticipants = await getAvailableParticipants(
         graphClient,
         participants,
         startDateTime,
@@ -187,8 +181,8 @@ async function findAvailableSlot(
         durationMinutes
       );
 
-      if (free) {
-        return { startDateTime, endDateTime };
+      if (availableParticipants.length >= 3) {
+        return { startDateTime, endDateTime, availableParticipants };
       }
     }
 
@@ -349,7 +343,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
 
       const event = await createCalendarEvent(
         graphClient,
-        participants,
+        slot.availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
         slot.startDateTime,
         slot.endDateTime,
@@ -358,7 +352,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
 
       meetings.push({
         subject: event.subject,
-        participants,
+        participants: slot.availableParticipants,
         startDateTime: slot.startDateTime,
         endDateTime: slot.endDateTime,
         status: "created",
@@ -436,7 +430,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     for (let i = 0; i < groups.length; i++) {
       const participants = groups[i];
 
-      const free = await areParticipantsFree(
+      const availableParticipants = await getAvailableParticipants(
         graphClient,
         participants,
         startGraph,
@@ -445,21 +439,21 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         Number(durationMinutes)
       );
 
-      if (!free) {
+      if (availableParticipants.length < 3) {
         meetings.push({
           subject: `DDS Coffee Talk #${i + 1}`,
           participants,
           startDateTime: startGraph,
           endDateTime: endGraph,
           status: "failed",
-          message: "One or more participants are not available.",
+          message: `Only ${availableParticipants.length} participant(s) available — need at least 3.`,
         });
         continue;
       }
 
       const event = await createCalendarEvent(
         graphClient,
-        participants,
+        availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
         startGraph,
         endGraph,
@@ -468,7 +462,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
 
       meetings.push({
         subject: event.subject,
-        participants,
+        participants: availableParticipants,
         startDateTime: startGraph,
         endDateTime: endGraph,
         status: "created",

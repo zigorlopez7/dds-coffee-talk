@@ -167,17 +167,16 @@ async function findAvailableSlot(
   let cursor = new Date(start);
 
   while (cursor < end) {
-    const day = cursor.getDay();
-    const hour = cursor.getHours();
+    const { weekday, hour } = getZonedParts(cursor, timeZone);
 
-    const isWeekday = day !== 0 && day !== 6;
+    const isWeekday = weekday !== 0 && weekday !== 6;
     const isWorkingHour = hour >= 9 && hour < 17;
 
     if (isWeekday && isWorkingHour) {
       const slotEnd = addMinutes(cursor, durationMinutes);
 
-      const startDateTime = toGraphDateTime(cursor);
-      const endDateTime = toGraphDateTime(slotEnd);
+      const startDateTime = toGraphDateTime(cursor, timeZone);
+      const endDateTime = toGraphDateTime(slotEnd, timeZone);
 
       const free = await areParticipantsFree(
         graphClient,
@@ -424,11 +423,13 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
       Number(participantsPerMeeting)
     );
 
-    const start = new Date(startDateTime);
+    // The picked value (e.g. from <input type="datetime-local">) is a naive
+    // wall clock the user means in `tz` — interpret it there, not server-local.
+    const start = zonedWallClockToInstant(startDateTime, tz);
     const end = addMinutes(start, Number(durationMinutes));
 
-    const startGraph = toGraphDateTime(start);
-    const endGraph = toGraphDateTime(end);
+    const startGraph = toGraphDateTime(start, tz);
+    const endGraph = toGraphDateTime(end, tz);
 
     const meetings: PlannedMeeting[] = [];
 
@@ -543,8 +544,77 @@ function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
 }
 
-function toGraphDateTime(date: Date): string {
-  return date.toISOString().replace(/\.\d{3}Z$/, "");
+// --- Time zone helpers ---------------------------------------------------
+// All scheduling reasoning happens in one explicit IANA time zone (the user's),
+// never the server process's ambient zone. JS Date.getHours()/getDay() read the
+// process-local zone while toISOString() reads UTC; mixing those two with a
+// third zone label (sent to Graph) is what created meetings outside working
+// hours. These helpers keep the target zone as the single source of truth.
+
+type ZonedParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  weekday: number; // 0 = Sunday ... 6 = Saturday
+};
+
+function getZonedParts(date: Date, timeZone: string): ZonedParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short",
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+
+  const weekdayMap: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    // "24" can appear at midnight with hour12:false in some engines; normalize.
+    hour: Number(get("hour")) % 24,
+    minute: Number(get("minute")),
+    second: Number(get("second")),
+    weekday: weekdayMap[get("weekday")],
+  };
+}
+
+// Naive wall-clock string ("YYYY-MM-DDTHH:mm:ss") of `date` as seen in
+// timeZone. This is exactly what Graph expects paired with start.timeZone.
+function toGraphDateTime(date: Date, timeZone: string): string {
+  const p = getZonedParts(date, timeZone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}`;
+}
+
+// Offset (ms) at `date` such that instant = (wall clock read as UTC) - offset.
+function timeZoneOffsetMs(date: Date, timeZone: string): number {
+  const p = getZonedParts(date, timeZone);
+  const wallClockAsUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return wallClockAsUTC - date.getTime();
+}
+
+// Inverse of toGraphDateTime: interpret a naive wall-clock string (e.g. the
+// value from an <input type="datetime-local">) as being in timeZone and return
+// the absolute instant it refers to.
+function zonedWallClockToInstant(naive: string, timeZone: string): Date {
+  // Read the naive components as if they were UTC to get a first guess...
+  const guess = new Date(naive.length === 16 ? `${naive}:00Z` : `${naive}Z`);
+  // ...then shift by the zone's offset at that instant.
+  return new Date(guess.getTime() - timeZoneOffsetMs(guess, timeZone));
 }
 
 function buildSearchWindowFromNow(): { start: Date; end: Date } {

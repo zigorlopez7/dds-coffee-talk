@@ -118,6 +118,7 @@ export default function App() {
 
       const payload = {
         ...getTeamChannelPayload(),
+        organizer: teamsContext?.user?.userPrincipalName,
         minPerMeeting,
         maxPerMeeting,
         durationMinutes,
@@ -149,6 +150,7 @@ export default function App() {
 
       const payload = {
         ...getTeamChannelPayload(),
+        organizer: teamsContext?.user?.userPrincipalName,
         minPerMeeting,
         maxPerMeeting,
         durationMinutes,

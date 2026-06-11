@@ -199,10 +199,9 @@ async function createCalendarEvent(
   subject: string,
   startDateTime: string,
   endDateTime: string,
-  timeZone: string
+  timeZone: string,
+  organizerEmail: string
 ) {
-  const organizer = participants[0];
-
   const attendees = participants.slice(1).map((p) => ({
     emailAddress: {
       address: p.email,
@@ -212,7 +211,7 @@ async function createCalendarEvent(
   }));
 
   return graphClient
-    .api(`/users/${organizer.userId}/events`)
+    .api(`/users/${organizerEmail}/events`)
     .post({
       subject,
       body: {
@@ -289,6 +288,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
     const {
       teamId,
       channelId,
+      organizer,
       minPerMeeting,
       maxPerMeeting,
       durationMinutes,
@@ -346,7 +346,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         `DDS Coffee Talk #${i + 1}`,
         slot.startDateTime,
         slot.endDateTime,
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid"
+        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
+        organizer
       );
 
       meetings.push({
@@ -382,6 +383,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const {
       teamId,
       channelId,
+      organizer,
       minPerMeeting,
       maxPerMeeting,
       durationMinutes,
@@ -453,7 +455,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         `DDS Coffee Talk #${i + 1}`,
         startGraph,
         endGraph,
-        tz
+        tz,
+        organizer
       );
 
       meetings.push({

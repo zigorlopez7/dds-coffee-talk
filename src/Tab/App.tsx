@@ -194,10 +194,7 @@ export default function App() {
       <main className="card">
         <header className="hero">
           <div>
-            <p className="eyebrow">
-              DEHN Internal Tool
-            </p>
-
+           
             <h1>DDS Coffee Talk</h1>
 
             <p className="subtitle">
@@ -278,15 +275,8 @@ export default function App() {
           </div>
 
           <div className="actions">
-            <button className="primaryButton" onClick={createMeetingsNow} disabled={loadingNow}>
-              {loadingNow && <span className="spinner" />}
-              Create random meetings now
-            </button>
+       
           </div>
-        </section>
-
-        <section className="section">
-          <h2>Schedule at a specified time</h2>
 
           <label>
             Start date/time
@@ -298,6 +288,10 @@ export default function App() {
           </label>
 
           <div className="actions">
+            <button className="primaryButton" onClick={createMeetingsNow} disabled={loadingNow}>
+              {loadingNow && <span className="spinner" />}
+              Create random meetings now
+            </button>
             <button
               className="secondaryButton"
               onClick={createMeetingsAtTime}
@@ -308,6 +302,8 @@ export default function App() {
             </button>
           </div>
         </section>
+
+  
 
         {meetings.length > 0 && (
           <section className="section">

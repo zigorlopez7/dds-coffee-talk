@@ -328,14 +328,9 @@ async function generateMeetingContent(
       console.warn("Could not fetch Confluence profiles:", err);
     }
 
-    const missingNote =
-      missingProfiles.length > 0
-        ? `\n\nNote: no Confluence profile was found for ${missingProfiles.join(", ")}. At the end of the response, add a short reminder (as a <p> tag) asking them to create their personal profile page.`
-        : "";
-
     const prompt = profileContent
-      ? `Here are the personal profile pages from Confluence for the participants:\n\n${profileContent}\n\nBased on their hobbies and personal interests, generate 4–6 conversation topic suggestions for their coffee meeting. List topics based on shared hobbies or interests first (mark them with "[Shared]").${missingNote}\n\nFormat the response as an HTML fragment (no <html>, <head>, or <body> tags):\n<p>Here are some conversation starters for your coffee chat:</p>\n<ul>\n  <li><strong>[Shared]</strong> A topic based on a shared interest...</li>\n  <li>Another topic suggestion...</li>\n</ul>\n<p><em>Enjoy your coffee chat! ☕ — DDS Coffee Talk</em></p>`
-      : `Generate 4–6 general conversation topic suggestions for a coffee meeting between ${names}.${missingNote}\n\nFormat the response as an HTML fragment (no <html>, <head>, or <body> tags):\n<p>Here are some conversation starters for your coffee chat:</p>\n<ul>\n  <li>A topic suggestion...</li>\n</ul>\n<p><em>Enjoy your coffee chat! ☕ — DDS Coffee Talk</em></p>`;
+      ? `Here are the personal profile pages from Confluence for the participants:\n\n${profileContent}\n\nBased on their hobbies and personal interests, generate 4–6 conversation topic suggestions for their coffee meeting. List topics based on shared hobbies or interests first, but do not label or mark them differently from the others — all topics should look the same.\n\nRespond with raw HTML only — no markdown, no code fences, no backticks. Start directly with the first HTML tag:\n<p>Here are some conversation starters for your coffee chat:</p>\n<ul>\n  <li>A topic suggestion...</li>\n  <li>Another topic suggestion...</li>\n</ul>\n<p><em>Enjoy your coffee chat! ☕ — DDS Coffee Talk</em></p>`
+      : `Generate 4–6 general conversation topic suggestions for a coffee meeting between ${names}.\n\nRespond with raw HTML only — no markdown, no code fences, no backticks. Start directly with the first HTML tag:\n<p>Here are some conversation starters for your coffee chat:</p>\n<ul>\n  <li>A topic suggestion...</li>\n</ul>\n<p><em>Enjoy your coffee chat! ☕ — DDS Coffee Talk</em></p>`;
 
     const client = new BedrockRuntimeClient({
       region: awsRegion,
@@ -350,9 +345,14 @@ async function generateMeetingContent(
       }),
     );
 
-    const text = response.output?.message?.content?.find((b) => b.text)?.text;
+    const raw = response.output?.message?.content?.find((b) => b.text)?.text;
+    const text = raw?.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
     if (text) {
-      return text;
+      const missingNote =
+        missingProfiles.length > 0
+          ? `<p style="background:#30414f;color:#ffffff;padding:12px 16px;border-radius:8px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;margin-top:16px;"><strong>Note:</strong> We noticed that profile pages were not found for ${missingProfiles.join(", ")}. If you're part of this team, please consider creating your personal profile page on Confluence to help your colleagues get to know you better and foster meaningful connections! 👀</p>`
+          : "";
+      return text + missingNote;
     }
   } catch (error) {
     console.warn("Could not generate AI meeting content:", error);

@@ -3,6 +3,30 @@ import * as teamsJs from "@microsoft/teams-js";
 
 import "./App.css";
 
+function getInitials(displayName: string) {
+  const parts = displayName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function UserCard({ member }: { member: { displayName: string; email?: string; photo?: string } }) {
+  return (
+    <div className="userCard">
+      <div className="userAvatar">
+        {member.photo ? (
+          <img width={96} height={96} src={member.photo} alt={member.displayName} className="userAvatarImg" />
+        ) : (
+          <div className="userAvatarInitials">{getInitials(member.displayName)}</div>
+        )}
+      </div>
+      <div className="userCardInfo">
+        <strong>{member.displayName}</strong>
+        {member.email && <span>{member.email}</span>}
+      </div>
+    </div>
+  );
+}
+
 type Member = {
   id?: string;
   userId?: string;
@@ -260,10 +284,7 @@ export default function App() {
           {members.length > 0 && (
             <div className="userGrid">
               {members.map((member, index) => (
-                <div key={member.userId || member.id || index} className="userCard">
-                  <strong>{member.displayName}</strong>
-                  {member.email && <span>{member.email}</span>}
-                </div>
+                <UserCard key={member.userId || member.id || index} member={member} />
               ))}
             </div>
           )}
@@ -386,10 +407,7 @@ export default function App() {
 
                   <div className="userGrid">
                     {meeting.participants.map((participant, i) => (
-                      <div key={participant.userId || participant.email || i} className="userCard">
-                        <strong>{participant.displayName}</strong>
-                        {participant.email && <span>{participant.email}</span>}
-                      </div>
+                      <UserCard key={participant.userId || participant.email || i} member={participant} />
                     ))}
                   </div>
 

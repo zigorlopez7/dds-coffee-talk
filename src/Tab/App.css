@@ -214,11 +214,12 @@ button:disabled {
 
 .userCard {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
   border: 1px solid var(--dehn-border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: #ffffff;
   transition: border-color 0.2s ease;
   flex-grow: 0;
@@ -227,11 +228,53 @@ button:disabled {
   width: fit-content;
 }
 
+.userAvatar {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  max-width: 28px;
+  max-height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--dehn-grey);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.userAvatar img {
+  display: block;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  max-width: 28px;
+  max-height: 28px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.userAvatarInitials {
+  color: #ffffff !important;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+.userCardInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .userCard:hover {
   border-color: var(--dehn-red);
 }
 
-.userCard span {
+.userCardInfo span {
   color: var(--dehn-grey);
   font-size: 13px;
 }

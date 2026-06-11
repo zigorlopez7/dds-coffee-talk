@@ -12,6 +12,8 @@ import { DevtoolsPlugin } from "@microsoft/teams.dev";
 
 import { ClientSecretCredential } from "@azure/identity";
 import { Client } from "@microsoft/microsoft-graph-client";
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
 const sslOptions = {
   key: process.env.SSL_KEY_FILE ? fs.readFileSync(process.env.SSL_KEY_FILE) : undefined,
@@ -211,13 +213,15 @@ async function createCalendarEvent(
     type: "required",
   }));
 
+  const bodyContent = await generateMeetingContent(participants);
+
   return graphClient
     .api(`/users/${organizer.userId}/events`)
     .post({
       subject,
       body: {
         contentType: "HTML",
-        content: "Created by DDS Coffee Talk.",
+        content: bodyContent,
       },
       start: {
         dateTime: startDateTime,
@@ -231,6 +235,133 @@ async function createCalendarEvent(
       isOnlineMeeting: true,
       onlineMeetingProvider: "teamsForBusiness",
     });
+}
+
+async function fetchParticipantProfiles(
+  participants: ChannelMember[],
+): Promise<{ content: string; missing: string[] }> {
+  const baseUrl =
+    process.env.CONFLUENCE_BASE_URL ?? "https://dehngroup.atlassian.net";
+  const email = process.env.CONFLUENCE_EMAIL;
+  const apiToken = process.env.CONFLUENCE_API_TOKEN;
+  const indexPageId = "2839281780";
+  const headers = {
+    Authorization: `Basic ${Buffer.from(`${email}:${apiToken}`).toString("base64")}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  const childRes = await fetch(
+    `${baseUrl}/wiki/rest/api/content/${indexPageId}/child/page?limit=100`,
+    { headers },
+  );
+
+  if (!childRes.ok) {
+    throw new Error(`Confluence API returned ${childRes.status}`);
+  }
+
+  const { results: childPages } = (await childRes.json()) as {
+    results: { id: string; title: string }[];
+  };
+
+  const results = await Promise.all(
+    participants.map(async (participant) => {
+      const name = participant.displayName.toLowerCase();
+      const match = childPages.find((p) => {
+        const title = p.title.toLowerCase();
+        return (
+          title === name ||
+          title.includes(name) ||
+          name
+            .split(" ")
+            .some((part) => part.length > 2 && title.includes(part))
+        );
+      });
+
+      if (!match) return { name: participant.displayName, text: null };
+
+      const pageRes = await fetch(
+        `${baseUrl}/wiki/rest/api/content/${match.id}?expand=body.storage`,
+        { headers },
+      );
+      if (!pageRes.ok) return { name: participant.displayName, text: null };
+
+      const pageData = (await pageRes.json()) as {
+        body: { storage: { value: string } };
+      };
+      const text = pageData.body.storage.value
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 2000);
+
+      return { name: participant.displayName, text };
+    }),
+  );
+
+  const content = results
+    .filter((r) => r.text)
+    .map((r) => `--- ${r.name} ---\n${r.text}`)
+    .join("\n\n");
+
+  const missing = results.filter((r) => !r.text).map((r) => r.name);
+
+  return { content, missing };
+}
+
+async function generateMeetingContent(
+  participants: ChannelMember[],
+): Promise<string> {
+  const awsRegion = process.env.AWS_REGION ?? "eu-central-1";
+  const modelId =
+    process.env.BEDROCK_MODEL_ID ??
+    "eu.anthropic.claude-haiku-4-5-20251001-v1:0";
+
+  const fallback = "<p>Created by DDS Coffee Talk. Enjoy your coffee chat!</p>";
+
+  const names = participants.map((p) => p.displayName).join(", ");
+
+  try {
+    let profileContent = "";
+    let missingProfiles: string[] = [];
+    try {
+      ({ content: profileContent, missing: missingProfiles } =
+        await fetchParticipantProfiles(participants));
+    } catch (err) {
+      console.warn("Could not fetch Confluence profiles:", err);
+    }
+
+    const missingNote =
+      missingProfiles.length > 0
+        ? `\n\nNote: no Confluence profile was found for ${missingProfiles.join(", ")}. At the end of the response, add a short reminder (as a <p> tag) asking them to create their personal profile page.`
+        : "";
+
+    const prompt = profileContent
+      ? `Here are the personal profile pages from Confluence for the participants:\n\n${profileContent}\n\nBased on their hobbies and personal interests, generate 4–6 conversation topic suggestions for their coffee meeting. List topics based on shared hobbies or interests first (mark them with "[Shared]").${missingNote}\n\nFormat the response as an HTML fragment (no <html>, <head>, or <body> tags):\n<p>Here are some conversation starters for your coffee chat:</p>\n<ul>\n  <li><strong>[Shared]</strong> A topic based on a shared interest...</li>\n  <li>Another topic suggestion...</li>\n</ul>\n<p><em>Enjoy your coffee chat! ☕ — DDS Coffee Talk</em></p>`
+      : `Generate 4–6 general conversation topic suggestions for a coffee meeting between ${names}.${missingNote}\n\nFormat the response as an HTML fragment (no <html>, <head>, or <body> tags):\n<p>Here are some conversation starters for your coffee chat:</p>\n<ul>\n  <li>A topic suggestion...</li>\n</ul>\n<p><em>Enjoy your coffee chat! ☕ — DDS Coffee Talk</em></p>`;
+
+    const client = new BedrockRuntimeClient({
+      region: awsRegion,
+      credentials: fromNodeProviderChain(),
+    });
+
+    const response = await client.send(
+      new ConverseCommand({
+        modelId,
+        messages: [{ role: "user", content: [{ text: prompt }] }],
+        inferenceConfig: { maxTokens: 1024 },
+      }),
+    );
+
+    const text = response.output?.message?.content?.find((b) => b.text)?.text;
+    if (text) {
+      return text;
+    }
+  } catch (error) {
+    console.warn("Could not generate AI meeting content:", error);
+  }
+
+  return fallback;
 }
 
 expressApp.get("/api/status", (_req: any, res: any) => {

@@ -9,6 +9,8 @@
         "README.md"
     ],
     "dependencies": {
+        "@aws-sdk/client-bedrock-runtime": "^3.1066.0",
+        "@aws-sdk/credential-providers": "^3.1066.0",
         "@azure/identity": "^4.13.1",
         "@microsoft/microsoft-graph-client": "^3.0.7",
         "@microsoft/teams-js": "^2.0.0",

@@ -69,6 +69,14 @@ async function getGraphClient() {
   });
 }
 
+const ALLOWED_EMAILS = new Set([
+  "borja.giraldez@dehn.de",
+  "alberto.reino@dehn.de",
+  "rasciel.villegas@dehn.de",
+  "zigor.lopez@dehn.de",
+  "jose.ruano@dehn.de",
+]);
+
 async function loadChannelMembers(
   graphClient: Client,
   teamId: string,
@@ -110,7 +118,9 @@ async function loadChannelMembers(
     });
   }
 
-  return members;
+  return members.filter(
+    (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
+  );
 }
 
 async function areParticipantsFree(

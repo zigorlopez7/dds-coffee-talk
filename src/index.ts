@@ -11,7 +11,7 @@ import { ConsoleLogger } from "@microsoft/teams.common/logging";
 import { DevtoolsPlugin } from "@microsoft/teams.dev";
 
 import { ClientSecretCredential } from "@azure/identity";
-import { Client } from "@microsoft/microsoft-graph-client";
+import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
@@ -118,9 +118,41 @@ async function loadChannelMembers(
     });
   }
 
-  return members.filter(
+  const allowed = members.filter(
     (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
   );
+
+  // Attach photos only for the members we keep, so we don't hit Graph for users
+  // we're about to discard.
+  for (const member of allowed) {
+    if (member.userId) {
+      member.photo = await getUserPhotoDataUri(graphClient, member.userId);
+    }
+  }
+
+  return allowed;
+}
+
+// Fetches a user's profile photo as a data URI ("data:image/jpeg;base64,...")
+// so the frontend can drop it straight into an <img src>. Returns undefined
+// when the user has no photo (Graph returns 404) or the lookup fails.
+async function getUserPhotoDataUri(
+  graphClient: Client,
+  userId: string
+): Promise<string | undefined> {
+  try {
+    const photo = await graphClient
+      .api(`/users/${userId}/photo/$value`)
+      .responseType(ResponseType.ARRAYBUFFER)
+      .get();
+
+    return `data:image/jpeg;base64,${Buffer.from(photo).toString("base64")}`;
+  } catch (error: any) {
+    if (error?.statusCode !== 404) {
+      console.warn(`Could not load photo for user ${userId}`, error);
+    }
+    return undefined;
+  }
 }
 
 async function getAvailableParticipants(
@@ -150,11 +182,23 @@ async function getAvailableParticipants(
   });
 }
 
+type Slot = {
+  startDateTime: string;
+  endDateTime: string;
+  availableParticipants: ChannelMember[];
+  startMs: number;
+  endMs: number;
+};
+
 // Slide a `durationMinutes` window across [window.start, window.end) in 30-min
-// steps and return the first slot where at least `minParticipants` are free.
-// When `enforceWorkingHours` is true the slot must also fall on a weekday
-// between 09:00 and 17:00 in `timeZone`; for an explicit user-picked range we
-// pass false so the whole range is honored as-is.
+// steps and return the slot that includes the MOST of `participants` (so we
+// drop as few people as possible). A slot where the whole group is free is
+// taken immediately; otherwise we keep scanning and return the best slot that
+// still has at least `minParticipants` free. When `enforceWorkingHours` is true
+// the slot must also fall on a weekday between 09:00 and 17:00 in `timeZone`.
+// Slots overlapping any interval in `bookedIntervals` (meetings already placed
+// this run) are skipped, so separate groups spread out instead of stacking on
+// the same time.
 async function findAvailableSlot(
   graphClient: Client,
   participants: ChannelMember[],
@@ -162,9 +206,11 @@ async function findAvailableSlot(
   timeZone: string,
   minParticipants: number,
   window: { start: Date; end: Date },
-  enforceWorkingHours: boolean
-): Promise<{ startDateTime: string; endDateTime: string; availableParticipants: ChannelMember[] } | null> {
+  enforceWorkingHours: boolean,
+  bookedIntervals: { start: number; end: number }[]
+): Promise<Slot | null> {
   let cursor = new Date(window.start);
+  let best: Slot | null = null;
 
   while (cursor < window.end) {
     const slotEnd = addMinutes(cursor, durationMinutes);
@@ -174,12 +220,23 @@ async function findAvailableSlot(
       break;
     }
 
+    const slotStartMs = cursor.getTime();
+    const slotEndMs = slotEnd.getTime();
+
     let acceptable = true;
     if (enforceWorkingHours) {
       const { weekday, hour } = getZonedParts(cursor, timeZone);
       const isWeekday = weekday !== 0 && weekday !== 6;
       const isWorkingHour = hour >= 9 && hour < 17;
       acceptable = isWeekday && isWorkingHour;
+    }
+
+    // Don't reuse a time already taken by a meeting we placed this run.
+    if (
+      acceptable &&
+      bookedIntervals.some((b) => slotStartMs < b.end && slotEndMs > b.start)
+    ) {
+      acceptable = false;
     }
 
     if (acceptable) {
@@ -195,15 +252,24 @@ async function findAvailableSlot(
         durationMinutes
       );
 
-      if (availableParticipants.length >= minParticipants) {
-        return { startDateTime, endDateTime, availableParticipants };
+      // Everyone is free here — can't do better, take it now.
+      if (availableParticipants.length === participants.length) {
+        return { startDateTime, endDateTime, availableParticipants, startMs: slotStartMs, endMs: slotEndMs };
+      }
+
+      // Otherwise remember the slot that keeps the most people (still >= min).
+      if (
+        availableParticipants.length >= minParticipants &&
+        (!best || availableParticipants.length > best.availableParticipants.length)
+      ) {
+        best = { startDateTime, endDateTime, availableParticipants, startMs: slotStartMs, endMs: slotEndMs };
       }
     }
 
     cursor = addMinutes(cursor, 30);
   }
 
-  return null;
+  return best;
 }
 
 async function createCalendarEvent(
@@ -460,6 +526,10 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
 
     const groups = createRandomGroups(members, min, max);
 
+    const tz = timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid";
+    const window = buildSearchWindowFromNow();
+    const bookedIntervals: { start: number; end: number }[] = [];
+
     const meetings: PlannedMeeting[] = [];
 
     for (let i = 0; i < groups.length; i++) {
@@ -468,10 +538,11 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         graphClient,
         participants,
         Number(durationMinutes),
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
+        tz,
         min,
-        buildSearchWindowFromNow(),
-        true
+        window,
+        true,
+        bookedIntervals
       );
 
       if (!slot) {
@@ -484,13 +555,15 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         continue;
       }
 
+      bookedIntervals.push({ start: slot.startMs, end: slot.endMs });
+
       const event = await createCalendarEvent(
         graphClient,
         slot.availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
         slot.startDateTime,
         slot.endDateTime,
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
+        tz,
         organizer
       );
 
@@ -585,6 +658,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
 
     const groups = createRandomGroups(members, min, max);
 
+    const bookedIntervals: { start: number; end: number }[] = [];
     const meetings: PlannedMeeting[] = [];
 
     for (let i = 0; i < groups.length; i++) {
@@ -598,7 +672,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         tz,
         min,
         window,
-        true
+        true,
+        bookedIntervals
       );
 
       if (!slot) {
@@ -610,6 +685,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         });
         continue;
       }
+
+      bookedIntervals.push({ start: slot.startMs, end: slot.endMs });
 
       const event = await createCalendarEvent(
         graphClient,
@@ -654,6 +731,7 @@ type ChannelMember = {
   userId?: string;
   displayName: string;
   email?: string;
+  photo?: string; // data URI of the user's profile photo, if any
 };
 
 type PlannedMeeting = {

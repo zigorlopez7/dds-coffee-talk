@@ -12,7 +12,7 @@ import { ConsoleLogger } from "@microsoft/teams.common/logging";
 import { DevtoolsPlugin } from "@microsoft/teams.dev";
 
 import { ClientSecretCredential } from "@azure/identity";
-import { Client } from "@microsoft/microsoft-graph-client";
+import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
@@ -134,9 +134,41 @@ async function loadChannelMembers(
     });
   }
 
-  return members.filter(
+  const allowed = members.filter(
     (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
   );
+
+  // Attach photos only for the members we keep, so we don't hit Graph for users
+  // we're about to discard.
+  for (const member of allowed) {
+    if (member.userId) {
+      member.photo = await getUserPhotoDataUri(graphClient, member.userId);
+    }
+  }
+
+  return allowed;
+}
+
+// Fetches a user's profile photo as a data URI ("data:image/jpeg;base64,...")
+// so the frontend can drop it straight into an <img src>. Returns undefined
+// when the user has no photo (Graph returns 404) or the lookup fails.
+async function getUserPhotoDataUri(
+  graphClient: Client,
+  userId: string
+): Promise<string | undefined> {
+  try {
+    const photo = await graphClient
+      .api(`/users/${userId}/photo/$value`)
+      .responseType(ResponseType.ARRAYBUFFER)
+      .get();
+
+    return `data:image/jpeg;base64,${Buffer.from(photo).toString("base64")}`;
+  } catch (error: any) {
+    if (error?.statusCode !== 404) {
+      console.warn(`Could not load photo for user ${userId}`, error);
+    }
+    return undefined;
+  }
 }
 
 async function getAvailableParticipants(
@@ -166,26 +198,64 @@ async function getAvailableParticipants(
   });
 }
 
+type Slot = {
+  startDateTime: string;
+  endDateTime: string;
+  availableParticipants: ChannelMember[];
+  startMs: number;
+  endMs: number;
+};
+
+// Slide a `durationMinutes` window across [window.start, window.end) in 30-min
+// steps and return the slot that includes the MOST of `participants` (so we
+// drop as few people as possible). A slot where the whole group is free is
+// taken immediately; otherwise we keep scanning and return the best slot that
+// still has at least `minParticipants` free. When `enforceWorkingHours` is true
+// the slot must also fall on a weekday between 09:00 and 17:00 in `timeZone`.
+// Slots overlapping any interval in `bookedIntervals` (meetings already placed
+// this run) are skipped, so separate groups spread out instead of stacking on
+// the same time.
 async function findAvailableSlot(
   graphClient: Client,
   participants: ChannelMember[],
   durationMinutes: number,
   timeZone: string,
-  minParticipants: number
-): Promise<{ startDateTime: string; endDateTime: string; availableParticipants: ChannelMember[] } | null> {
-  const { start, end } = buildSearchWindowFromNow();
+  minParticipants: number,
+  window: { start: Date; end: Date },
+  enforceWorkingHours: boolean,
+  bookedIntervals: { start: number; end: number }[]
+): Promise<Slot | null> {
+  let cursor = new Date(window.start);
+  let best: Slot | null = null;
 
-  let cursor = new Date(start);
+  while (cursor < window.end) {
+    const slotEnd = addMinutes(cursor, durationMinutes);
 
-  while (cursor < end) {
-    const { weekday, hour } = getZonedParts(cursor, timeZone);
+    // The whole meeting must fit inside the window.
+    if (slotEnd > window.end) {
+      break;
+    }
 
-    const isWeekday = weekday !== 0 && weekday !== 6;
-    const isWorkingHour = hour >= 9 && hour < 17;
+    const slotStartMs = cursor.getTime();
+    const slotEndMs = slotEnd.getTime();
 
-    if (isWeekday && isWorkingHour) {
-      const slotEnd = addMinutes(cursor, durationMinutes);
+    let acceptable = true;
+    if (enforceWorkingHours) {
+      const { weekday, hour } = getZonedParts(cursor, timeZone);
+      const isWeekday = weekday !== 0 && weekday !== 6;
+      const isWorkingHour = hour >= 9 && hour < 17;
+      acceptable = isWeekday && isWorkingHour;
+    }
 
+    // Don't reuse a time already taken by a meeting we placed this run.
+    if (
+      acceptable &&
+      bookedIntervals.some((b) => slotStartMs < b.end && slotEndMs > b.start)
+    ) {
+      acceptable = false;
+    }
+
+    if (acceptable) {
       const startDateTime = toGraphDateTime(cursor, timeZone);
       const endDateTime = toGraphDateTime(slotEnd, timeZone);
 
@@ -198,15 +268,24 @@ async function findAvailableSlot(
         durationMinutes
       );
 
-      if (availableParticipants.length >= minParticipants) {
-        return { startDateTime, endDateTime, availableParticipants };
+      // Everyone is free here — can't do better, take it now.
+      if (availableParticipants.length === participants.length) {
+        return { startDateTime, endDateTime, availableParticipants, startMs: slotStartMs, endMs: slotEndMs };
+      }
+
+      // Otherwise remember the slot that keeps the most people (still >= min).
+      if (
+        availableParticipants.length >= minParticipants &&
+        (!best || availableParticipants.length > best.availableParticipants.length)
+      ) {
+        best = { startDateTime, endDateTime, availableParticipants, startMs: slotStartMs, endMs: slotEndMs };
       }
     }
 
     cursor = addMinutes(cursor, 30);
   }
 
-  return null;
+  return best;
 }
 
 async function createCalendarEvent(
@@ -361,7 +440,7 @@ async function generateMeetingContent(
       }),
     );
 
-    const raw = response.output?.message?.content?.find((b) => b.text)?.text;
+    const raw = response.output?.message?.content?.find((b: any) => b.text)?.text;
     const text = raw?.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
     if (text) {
       const missingNote =
@@ -464,6 +543,10 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
     const pairs = getPairHistory(channelId);
     const groups = createHistoryAwareGroups(members, min, max, pairs);
 
+    const tz = timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid";
+    const window = buildSearchWindowFromNow();
+    const bookedIntervals: { start: number; end: number }[] = [];
+
     const meetings: PlannedMeeting[] = [];
 
     for (let i = 0; i < groups.length; i++) {
@@ -472,8 +555,11 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         graphClient,
         participants,
         Number(durationMinutes),
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
-        min
+        tz,
+        min,
+        window,
+        true,
+        bookedIntervals
       );
 
       if (!slot) {
@@ -486,13 +572,15 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         continue;
       }
 
+      bookedIntervals.push({ start: slot.startMs, end: slot.endMs });
+
       const event = await createCalendarEvent(
         graphClient,
         slot.availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
         slot.startDateTime,
         slot.endDateTime,
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
+        tz,
         organizer
       );
 
@@ -536,13 +624,14 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
       maxPerMeeting,
       durationMinutes,
       startDateTime,
+      endDateTime,
       timeZone,
     } = req.body;
 
-    if (!teamId || !channelId || !startDateTime) {
+    if (!teamId || !channelId || !startDateTime || !endDateTime) {
       return res.status(400).json({
         ok: false,
-        message: "Missing team/channel context or start date/time.",
+        message: "Missing team/channel context or start/end of the range.",
         meetings: [],
       });
     }
@@ -561,60 +650,81 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
+    // Inputs are day-only ("YYYY-MM-DD") in the user's tz. The range spans from
+    // the start of the first day to the end of the last (start of the day after
+    // endDate, exclusive). The 09:00–17:00 working-hour gate inside
+    // findAvailableSlot keeps slots within sensible hours of those days.
+    const rangeStart = zonedWallClockToInstant(`${startDateTime}T00:00`, tz);
+    const rangeEnd = addMinutes(
+      zonedWallClockToInstant(`${endDateTime}T00:00`, tz),
+      24 * 60
+    );
+
+    if (rangeEnd.getTime() <= rangeStart.getTime()) {
+      return res.status(400).json({
+        ok: false,
+        message: "The end day must be on or after the start day.",
+        meetings: [],
+      });
+    }
+
+    // Never search into the past — if the start day is today, begin from now.
+    const now = new Date();
+    const window = {
+      start: rangeStart.getTime() < now.getTime() ? now : rangeStart,
+      end: rangeEnd,
+    };
+
     const pairs = getPairHistory(channelId);
     const groups = createHistoryAwareGroups(members, min, max, pairs);
 
-    // The picked value (e.g. from <input type="datetime-local">) is a naive
-    // wall clock the user means in `tz` — interpret it there, not server-local.
-    const start = zonedWallClockToInstant(startDateTime, tz);
-    const end = addMinutes(start, Number(durationMinutes));
-
-    const startGraph = toGraphDateTime(start, tz);
-    const endGraph = toGraphDateTime(end, tz);
-
+    const bookedIntervals: { start: number; end: number }[] = [];
     const meetings: PlannedMeeting[] = [];
 
     for (let i = 0; i < groups.length; i++) {
       const participants = groups[i];
 
-      const availableParticipants = await getAvailableParticipants(
+      // Search inside the chosen days, restricted to working hours.
+      const slot = await findAvailableSlot(
         graphClient,
         participants,
-        startGraph,
-        endGraph,
+        Number(durationMinutes),
         tz,
-        Number(durationMinutes)
+        min,
+        window,
+        true,
+        bookedIntervals
       );
 
-      if (availableParticipants.length < min) {
+      if (!slot) {
         meetings.push({
           subject: `DDS Coffee Talk #${i + 1}`,
           participants,
-          startDateTime: startGraph,
-          endDateTime: endGraph,
           status: "failed",
-          message: `Only ${availableParticipants.length} participant(s) available — need at least ${min}.`,
+          message: `No slot with at least ${min} participant(s) free in the selected range.`,
         });
         continue;
       }
 
+      bookedIntervals.push({ start: slot.startMs, end: slot.endMs });
+
       const event = await createCalendarEvent(
         graphClient,
-        availableParticipants,
+        slot.availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
-        startGraph,
-        endGraph,
+        slot.startDateTime,
+        slot.endDateTime,
         tz,
         organizer
       );
 
-      recordMeeting(channelId, availableParticipants);
+      recordMeeting(channelId, slot.availableParticipants);
 
       meetings.push({
         subject: event.subject,
-        participants: availableParticipants,
-        startDateTime: startGraph,
-        endDateTime: endGraph,
+        participants: slot.availableParticipants,
+        startDateTime: slot.startDateTime,
+        endDateTime: slot.endDateTime,
         status: "created",
         message: "Meeting created.",
         webLink: event.webLink,
@@ -643,6 +753,7 @@ type ChannelMember = {
   userId?: string;
   displayName: string;
   email?: string;
+  photo?: string; // data URI of the user's profile photo, if any
 };
 
 type PlannedMeeting = {

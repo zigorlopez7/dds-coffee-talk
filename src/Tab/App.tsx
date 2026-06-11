@@ -8,6 +8,7 @@ type Member = {
   userId?: string;
   displayName: string;
   email?: string;
+  photo?: string; // data URI of the user's profile photo, if any
 };
 
 type Meeting = {

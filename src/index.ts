@@ -118,9 +118,41 @@ async function loadChannelMembers(
     });
   }
 
-  return members.filter(
+  const allowed = members.filter(
     (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
   );
+
+  // Attach photos only for the members we keep, so we don't hit Graph for users
+  // we're about to discard.
+  for (const member of allowed) {
+    if (member.userId) {
+      member.photo = await getUserPhotoDataUri(graphClient, member.userId);
+    }
+  }
+
+  return allowed;
+}
+
+// Fetches a user's profile photo as a data URI ("data:image/jpeg;base64,...")
+// so the frontend can drop it straight into an <img src>. Returns undefined
+// when the user has no photo (Graph returns 404) or the lookup fails.
+async function getUserPhotoDataUri(
+  graphClient: Client,
+  userId: string
+): Promise<string | undefined> {
+  try {
+    const photo = await graphClient
+      .api(`/users/${userId}/photo/$value`)
+      .responseType(ResponseType.ARRAYBUFFER)
+      .get();
+
+    return `data:image/jpeg;base64,${Buffer.from(photo).toString("base64")}`;
+  } catch (error: any) {
+    if (error?.statusCode !== 404) {
+      console.warn(`Could not load photo for user ${userId}`, error);
+    }
+    return undefined;
+  }
 }
 
 async function getAvailableParticipants(
@@ -416,37 +448,6 @@ expressApp.get("/api/status", (_req: any, res: any) => {
   });
 });
 
-// Streams a user's Microsoft 365 profile photo so the frontend can use it
-// directly: <img src={`/api/users/${member.userId}/photo`} />. `userId` is the
-// value already returned on each channel member. Returns 404 when the user has
-// no photo (Graph's behavior) so the frontend can fall back to initials.
-expressApp.get("/api/users/:userId/photo", async (req: any, res: any) => {
-  const { userId } = req.params;
-
-  if (!graphIsConfigured()) {
-    return res.status(503).json({ ok: false, message: "Graph access is not configured." });
-  }
-
-  try {
-    const graphClient = await getGraphClient();
-    const photo = await graphClient
-      .api(`/users/${userId}/photo/$value`)
-      .responseType(ResponseType.ARRAYBUFFER)
-      .get();
-
-    res.set("Content-Type", "image/jpeg");
-    res.set("Cache-Control", "private, max-age=86400");
-    return res.send(Buffer.from(photo));
-  } catch (error: any) {
-    // Graph returns 404 when the user simply has no photo set.
-    const status = error?.statusCode === 404 ? 404 : 500;
-    return res.status(status).json({
-      ok: false,
-      message: status === 404 ? "No photo for this user." : "Could not load user photo.",
-    });
-  }
-});
-
 expressApp.post("/api/channel-members", async (req: any, res: any) => {
   try {
     const { teamId, channelId } = req.body;
@@ -730,6 +731,7 @@ type ChannelMember = {
   userId?: string;
   displayName: string;
   email?: string;
+  photo?: string; // data URI of the user's profile photo, if any
 };
 
 type PlannedMeeting = {

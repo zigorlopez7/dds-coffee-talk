@@ -32,27 +32,27 @@ export default function App() {
   const [startDateTime, setStartDateTime] = useState("");
   const [timeZone, setTimeZone] = useState("Europe/Madrid");
 
+  function formatDateTime(dateTimeString?: string) {
+    if (!dateTimeString) return "";
+
+    const date = new Date(dateTimeString);
+
+    return new Intl.DateTimeFormat("en-GB", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: timeZone,
+    }).format(date);
+  }
+
   useEffect(() => {
     async function init() {
       try {
         await teamsJs.app.initialize();
         const context = await teamsJs.app.getContext();
-
-        if (context.page.frameContext === teamsJs.FrameContexts.settings) {
-          teamsJs.pages.config.registerOnSaveHandler((saveEvent) => {
-            teamsJs.pages.config.setConfig({
-              suggestedDisplayName: "DDS Coffee Talk",
-              contentUrl: `${window.location.origin}/tabs/home`,
-            });
-            saveEvent.notifySuccess();
-          });
-          teamsJs.pages.config.setValidityState(true);
-          setMessage("Click Save to add DDS Coffee Talk to this channel.");
-          return;
-        }
-
-        setTeamsContext(context);
-        setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
 
         if (context.page.frameContext === teamsJs.FrameContexts.settings) {
           teamsJs.pages.config.setValidityState(true);
@@ -64,7 +64,12 @@ export default function App() {
             });
             saveEvent.notifySuccess();
           });
+          setMessage("Click Save to add DDS Coffee Talk to this channel.");
+          return;
         }
+
+        setTeamsContext(context);
+        setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
       } catch (error) {
         console.error(error);
         setMessage("Salute. Running outside Teams or Teams SDK failed.");
@@ -307,7 +312,7 @@ export default function App() {
 
                   {meeting.startDateTime && (
                     <p className="muted">
-                      {meeting.startDateTime} → {meeting.endDateTime}
+                      {formatDateTime(meeting.startDateTime)} → {formatDateTime(meeting.endDateTime)}
                     </p>
                   )}
 

@@ -216,10 +216,13 @@ button:disabled {
 }
 
 .meetingCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   background: #ffffff;
   border: 1px solid var(--dehn-border);
   border-radius: 12px;
-  padding: 16px;
+  padding: 20px;
 }
 
 .meetingCard > div {
@@ -229,18 +232,41 @@ button:disabled {
   gap: 16px;
 }
 
+.meetingCard > p {
+  margin: 0;
+}
+
 .meetingCard ul {
-  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.meetingCard ul li {
+  color: var(--dehn-black);
 }
 
 .meetingCard a {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
   color: var(--dehn-red);
   font-weight: 700;
   text-decoration: none;
+  padding: 8px 12px;
+  border: 2px solid var(--dehn-red);
+  border-radius: 8px;
+  transition: all 0.2s ease;
 }
 
 .meetingCard a:hover {
-  text-decoration: underline;
+  background: var(--dehn-red);
+  color: #ffffff;
+  text-decoration: none;
+  transform: translateY(-1px);
 }
 
 .pill {
@@ -307,6 +333,8 @@ pre {
 
   .list li,
   .meetingCard > div {
+    display: flex;
+    column-gap: 10px;
     flex-direction: column;
     align-items: flex-start;
   }

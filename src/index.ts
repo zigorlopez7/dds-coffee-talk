@@ -11,7 +11,7 @@ import { ConsoleLogger } from "@microsoft/teams.common/logging";
 import { DevtoolsPlugin } from "@microsoft/teams.dev";
 
 import { ClientSecretCredential } from "@azure/identity";
-import { Client } from "@microsoft/microsoft-graph-client";
+import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
@@ -414,6 +414,37 @@ expressApp.get("/api/status", (_req: any, res: any) => {
     message: "Backend is connected",
     graphConfigured: graphIsConfigured(),
   });
+});
+
+// Streams a user's Microsoft 365 profile photo so the frontend can use it
+// directly: <img src={`/api/users/${member.userId}/photo`} />. `userId` is the
+// value already returned on each channel member. Returns 404 when the user has
+// no photo (Graph's behavior) so the frontend can fall back to initials.
+expressApp.get("/api/users/:userId/photo", async (req: any, res: any) => {
+  const { userId } = req.params;
+
+  if (!graphIsConfigured()) {
+    return res.status(503).json({ ok: false, message: "Graph access is not configured." });
+  }
+
+  try {
+    const graphClient = await getGraphClient();
+    const photo = await graphClient
+      .api(`/users/${userId}/photo/$value`)
+      .responseType(ResponseType.ARRAYBUFFER)
+      .get();
+
+    res.set("Content-Type", "image/jpeg");
+    res.set("Cache-Control", "private, max-age=86400");
+    return res.send(Buffer.from(photo));
+  } catch (error: any) {
+    // Graph returns 404 when the user simply has no photo set.
+    const status = error?.statusCode === 404 ? 404 : 500;
+    return res.status(status).json({
+      ok: false,
+      message: status === 404 ? "No photo for this user." : "Could not load user photo.",
+    });
+  }
 });
 
 expressApp.post("/api/channel-members", async (req: any, res: any) => {

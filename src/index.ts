@@ -69,6 +69,14 @@ async function getGraphClient() {
   });
 }
 
+const ALLOWED_EMAILS = new Set([
+  "borja.giraldez@dehn.de",
+  "alberto.reino@dehn.de",
+  "rasciel.villegas@dehn.de",
+  "zigor.lopez@dehn.de",
+  "jose.ruano@dehn.de",
+]);
+
 async function loadChannelMembers(
   graphClient: Client,
   teamId: string,
@@ -110,39 +118,35 @@ async function loadChannelMembers(
     });
   }
 
-  return members;
+  return members.filter(
+    (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
+  );
 }
 
-async function areParticipantsFree(
+async function getAvailableParticipants(
   graphClient: Client,
   participants: ChannelMember[],
   startDateTime: string,
   endDateTime: string,
   timeZone: string,
   durationMinutes: number
-): Promise<boolean> {
-  const organizer = participants[0];
+): Promise<ChannelMember[]> {
+  const caller = participants.find((p) => p.userId) ?? participants[0];
 
-  // availabilityViewInterval must be between 5 and 1440 AND strictly less than the window length
   const availabilityViewInterval = Math.max(5, Math.floor(durationMinutes / 2));
 
   const result = await graphClient
-    .api(`/users/${organizer.userId}/calendar/getSchedule`)
+    .api(`/users/${caller.userId}/calendar/getSchedule`)
     .post({
       schedules: participants.map((p) => p.email),
-      startTime: {
-        dateTime: startDateTime,
-        timeZone,
-      },
-      endTime: {
-        dateTime: endDateTime,
-        timeZone,
-      },
+      startTime: { dateTime: startDateTime, timeZone },
+      endTime: { dateTime: endDateTime, timeZone },
       availabilityViewInterval,
     });
 
-  return result.value.every((schedule: any) => {
-    return !schedule.scheduleItems || schedule.scheduleItems.length === 0;
+  return participants.filter((_, i) => {
+    const schedule = result.value[i];
+    return !schedule?.scheduleItems || schedule.scheduleItems.length === 0;
   });
 }
 
@@ -150,26 +154,26 @@ async function findAvailableSlot(
   graphClient: Client,
   participants: ChannelMember[],
   durationMinutes: number,
-  timeZone: string
-): Promise<{ startDateTime: string; endDateTime: string } | null> {
+  timeZone: string,
+  minParticipants: number
+): Promise<{ startDateTime: string; endDateTime: string; availableParticipants: ChannelMember[] } | null> {
   const { start, end } = buildSearchWindowFromNow();
 
   let cursor = new Date(start);
 
   while (cursor < end) {
-    const day = cursor.getDay();
-    const hour = cursor.getHours();
+    const { weekday, hour } = getZonedParts(cursor, timeZone);
 
-    const isWeekday = day !== 0 && day !== 6;
+    const isWeekday = weekday !== 0 && weekday !== 6;
     const isWorkingHour = hour >= 9 && hour < 17;
 
     if (isWeekday && isWorkingHour) {
       const slotEnd = addMinutes(cursor, durationMinutes);
 
-      const startDateTime = toGraphDateTime(cursor);
-      const endDateTime = toGraphDateTime(slotEnd);
+      const startDateTime = toGraphDateTime(cursor, timeZone);
+      const endDateTime = toGraphDateTime(slotEnd, timeZone);
 
-      const free = await areParticipantsFree(
+      const availableParticipants = await getAvailableParticipants(
         graphClient,
         participants,
         startDateTime,
@@ -178,8 +182,8 @@ async function findAvailableSlot(
         durationMinutes
       );
 
-      if (free) {
-        return { startDateTime, endDateTime };
+      if (availableParticipants.length >= minParticipants) {
+        return { startDateTime, endDateTime, availableParticipants };
       }
     }
 
@@ -285,8 +289,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
     const {
       teamId,
       channelId,
-      meetingCount,
-      participantsPerMeeting,
+      minPerMeeting,
+      maxPerMeeting,
       durationMinutes,
       timeZone,
     } = req.body;
@@ -308,14 +312,11 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
       });
     }
 
+    const { min, max } = normalizeGroupSize(minPerMeeting, maxPerMeeting);
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
-    const groups = createRandomGroups(
-      members,
-      Number(meetingCount),
-      Number(participantsPerMeeting)
-    );
+    const groups = createRandomGroups(members, min, max);
 
     const meetings: PlannedMeeting[] = [];
 
@@ -325,7 +326,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         graphClient,
         participants,
         Number(durationMinutes),
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid"
+        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
+        min
       );
 
       if (!slot) {
@@ -340,7 +342,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
 
       const event = await createCalendarEvent(
         graphClient,
-        participants,
+        slot.availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
         slot.startDateTime,
         slot.endDateTime,
@@ -349,7 +351,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
 
       meetings.push({
         subject: event.subject,
-        participants,
+        participants: slot.availableParticipants,
         startDateTime: slot.startDateTime,
         endDateTime: slot.endDateTime,
         status: "created",
@@ -380,8 +382,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const {
       teamId,
       channelId,
-      meetingCount,
-      participantsPerMeeting,
+      minPerMeeting,
+      maxPerMeeting,
       durationMinutes,
       startDateTime,
       timeZone,
@@ -404,28 +406,27 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
       });
     }
 
+    const { min, max } = normalizeGroupSize(minPerMeeting, maxPerMeeting);
     const tz = timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid";
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
-    const groups = createRandomGroups(
-      members,
-      Number(meetingCount),
-      Number(participantsPerMeeting)
-    );
+    const groups = createRandomGroups(members, min, max);
 
-    const start = new Date(startDateTime);
+    // The picked value (e.g. from <input type="datetime-local">) is a naive
+    // wall clock the user means in `tz` — interpret it there, not server-local.
+    const start = zonedWallClockToInstant(startDateTime, tz);
     const end = addMinutes(start, Number(durationMinutes));
 
-    const startGraph = toGraphDateTime(start);
-    const endGraph = toGraphDateTime(end);
+    const startGraph = toGraphDateTime(start, tz);
+    const endGraph = toGraphDateTime(end, tz);
 
     const meetings: PlannedMeeting[] = [];
 
     for (let i = 0; i < groups.length; i++) {
       const participants = groups[i];
 
-      const free = await areParticipantsFree(
+      const availableParticipants = await getAvailableParticipants(
         graphClient,
         participants,
         startGraph,
@@ -434,21 +435,21 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         Number(durationMinutes)
       );
 
-      if (!free) {
+      if (availableParticipants.length < min) {
         meetings.push({
           subject: `DDS Coffee Talk #${i + 1}`,
           participants,
           startDateTime: startGraph,
           endDateTime: endGraph,
           status: "failed",
-          message: "One or more participants are not available.",
+          message: `Only ${availableParticipants.length} participant(s) available — need at least ${min}.`,
         });
         continue;
       }
 
       const event = await createCalendarEvent(
         graphClient,
-        participants,
+        availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
         startGraph,
         endGraph,
@@ -457,7 +458,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
 
       meetings.push({
         subject: event.subject,
-        participants,
+        participants: availableParticipants,
         startDateTime: startGraph,
         endDateTime: endGraph,
         status: "created",
@@ -504,26 +505,52 @@ function shuffle<T>(items: T[]): T[] {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
+// Coerce the request's min/max group size into a valid range: min is at least 1
+// and max is never below min. Missing values fall back to pairs.
+function normalizeGroupSize(
+  minPerMeeting: unknown,
+  maxPerMeeting: unknown
+): { min: number; max: number } {
+  const min = Math.max(1, Number(minPerMeeting) || 2);
+  const max = Math.max(min, Number(maxPerMeeting) || min);
+  return { min, max };
+}
+
+// Partition ALL usable members into as many meeting groups as possible, each
+// holding between minPerMeeting and maxPerMeeting people. We open the most
+// groups the minimum allows (floor(total / min)) and round-robin everyone into
+// them, capping each at the maximum. With evenly divisible numbers every group
+// gets the same size; otherwise the extra people are spread one per group up to
+// the cap. Anyone who can't fill a group of `min` is left out for this round.
 function createRandomGroups(
   members: ChannelMember[],
-  meetingCount: number,
-  participantsPerMeeting: number
+  minPerMeeting: number,
+  maxPerMeeting: number
 ): ChannelMember[][] {
   const usableMembers = members.filter((m) => m.email);
   const shuffled = shuffle(usableMembers);
 
-  const groups: ChannelMember[][] = [];
-  let index = 0;
+  const groupCount = Math.floor(shuffled.length / minPerMeeting);
+  if (groupCount === 0) {
+    return [];
+  }
 
-  for (let i = 0; i < meetingCount; i++) {
-    const group = shuffled.slice(index, index + participantsPerMeeting);
+  const groups: ChannelMember[][] = Array.from({ length: groupCount }, () => []);
 
-    if (group.length < participantsPerMeeting) {
+  let cursor = 0;
+  for (const member of shuffled) {
+    // Skip groups that already hit the maximum; stop once they are all full.
+    let scanned = 0;
+    while (scanned < groupCount && groups[cursor].length >= maxPerMeeting) {
+      cursor = (cursor + 1) % groupCount;
+      scanned++;
+    }
+    if (groups[cursor].length >= maxPerMeeting) {
       break;
     }
 
-    groups.push(group);
-    index += participantsPerMeeting;
+    groups[cursor].push(member);
+    cursor = (cursor + 1) % groupCount;
   }
 
   return groups;
@@ -533,8 +560,77 @@ function addMinutes(date: Date, minutes: number): Date {
   return new Date(date.getTime() + minutes * 60_000);
 }
 
-function toGraphDateTime(date: Date): string {
-  return date.toISOString().replace(/\.\d{3}Z$/, "");
+// --- Time zone helpers ---------------------------------------------------
+// All scheduling reasoning happens in one explicit IANA time zone (the user's),
+// never the server process's ambient zone. JS Date.getHours()/getDay() read the
+// process-local zone while toISOString() reads UTC; mixing those two with a
+// third zone label (sent to Graph) is what created meetings outside working
+// hours. These helpers keep the target zone as the single source of truth.
+
+type ZonedParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  weekday: number; // 0 = Sunday ... 6 = Saturday
+};
+
+function getZonedParts(date: Date, timeZone: string): ZonedParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short",
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+
+  const weekdayMap: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    // "24" can appear at midnight with hour12:false in some engines; normalize.
+    hour: Number(get("hour")) % 24,
+    minute: Number(get("minute")),
+    second: Number(get("second")),
+    weekday: weekdayMap[get("weekday")],
+  };
+}
+
+// Naive wall-clock string ("YYYY-MM-DDTHH:mm:ss") of `date` as seen in
+// timeZone. This is exactly what Graph expects paired with start.timeZone.
+function toGraphDateTime(date: Date, timeZone: string): string {
+  const p = getZonedParts(date, timeZone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}`;
+}
+
+// Offset (ms) at `date` such that instant = (wall clock read as UTC) - offset.
+function timeZoneOffsetMs(date: Date, timeZone: string): number {
+  const p = getZonedParts(date, timeZone);
+  const wallClockAsUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return wallClockAsUTC - date.getTime();
+}
+
+// Inverse of toGraphDateTime: interpret a naive wall-clock string (e.g. the
+// value from an <input type="datetime-local">) as being in timeZone and return
+// the absolute instant it refers to.
+function zonedWallClockToInstant(naive: string, timeZone: string): Date {
+  // Read the naive components as if they were UTC to get a first guess...
+  const guess = new Date(naive.length === 16 ? `${naive}:00Z` : `${naive}Z`);
+  // ...then shift by the zone's offset at that instant.
+  return new Date(guess.getTime() - timeZoneOffsetMs(guess, timeZone));
 }
 
 function buildSearchWindowFromNow(): { start: Date; end: Date } {

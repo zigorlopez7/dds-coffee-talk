@@ -26,33 +26,33 @@ export default function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
 
-  const [meetingCount, setMeetingCount] = useState(1);
-  const [participantsPerMeeting, setParticipantsPerMeeting] = useState(2);
+  const [minPerMeeting, setMinPerMeeting] = useState(2);
+  const [maxPerMeeting, setMaxPerMeeting] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [startDateTime, setStartDateTime] = useState("");
   const [timeZone, setTimeZone] = useState("Europe/Madrid");
+
+  function formatDateTime(dateTimeString?: string) {
+    if (!dateTimeString) return "";
+
+    const date = new Date(dateTimeString);
+
+    return new Intl.DateTimeFormat("en-GB", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: timeZone,
+    }).format(date);
+  }
 
   useEffect(() => {
     async function init() {
       try {
         await teamsJs.app.initialize();
         const context = await teamsJs.app.getContext();
-
-        if (context.page.frameContext === teamsJs.FrameContexts.settings) {
-          teamsJs.pages.config.registerOnSaveHandler((saveEvent) => {
-            teamsJs.pages.config.setConfig({
-              suggestedDisplayName: "DDS Coffee Talk",
-              contentUrl: `${window.location.origin}/tabs/home`,
-            });
-            saveEvent.notifySuccess();
-          });
-          teamsJs.pages.config.setValidityState(true);
-          setMessage("Click Save to add DDS Coffee Talk to this channel.");
-          return;
-        }
-
-        setTeamsContext(context);
-        setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
 
         if (context.page.frameContext === teamsJs.FrameContexts.settings) {
           teamsJs.pages.config.setValidityState(true);
@@ -64,7 +64,12 @@ export default function App() {
             });
             saveEvent.notifySuccess();
           });
+          setMessage("Click Save to add DDS Coffee Talk to this channel.");
+          return;
         }
+
+        setTeamsContext(context);
+        setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
       } catch (error) {
         console.error(error);
         setMessage("Salute. Running outside Teams or Teams SDK failed.");
@@ -113,8 +118,8 @@ export default function App() {
 
       const payload = {
         ...getTeamChannelPayload(),
-        meetingCount,
-        participantsPerMeeting,
+        minPerMeeting,
+        maxPerMeeting,
         durationMinutes,
         timeZone,
       };
@@ -144,8 +149,8 @@ export default function App() {
 
       const payload = {
         ...getTeamChannelPayload(),
-        meetingCount,
-        participantsPerMeeting,
+        minPerMeeting,
+        maxPerMeeting,
         durationMinutes,
         startDateTime,
         timeZone,
@@ -219,22 +224,22 @@ export default function App() {
 
           <div className="grid">
             <label>
-              Number of meetings
+              Min participants per meeting
               <input
                 type="number"
                 min={1}
-                value={meetingCount}
-                onChange={(e) => setMeetingCount(Number(e.target.value))}
+                value={minPerMeeting}
+                onChange={(e) => setMinPerMeeting(Number(e.target.value))}
               />
             </label>
 
             <label>
-              Participants per meeting
+              Max participants per meeting
               <input
                 type="number"
-                min={2}
-                value={participantsPerMeeting}
-                onChange={(e) => setParticipantsPerMeeting(Number(e.target.value))}
+                min={minPerMeeting}
+                value={maxPerMeeting}
+                onChange={(e) => setMaxPerMeeting(Number(e.target.value))}
               />
             </label>
 
@@ -307,7 +312,7 @@ export default function App() {
 
                   {meeting.startDateTime && (
                     <p className="muted">
-                      {meeting.startDateTime} → {meeting.endDateTime}
+                      {formatDateTime(meeting.startDateTime)} → {formatDateTime(meeting.endDateTime)}
                     </p>
                   )}
 
@@ -329,21 +334,6 @@ export default function App() {
             </div>
           </section>
         )}
-
-        <section className="debugBox">
-          <h3>Debug context</h3>
-          <pre>
-            {JSON.stringify(
-              {
-                teamId: teamsContext?.team?.groupId,
-                channelId: teamsContext?.channel?.id,
-                user: teamsContext?.user?.userPrincipalName,
-              },
-              null,
-              2
-            )}
-          </pre>
-        </section>
       </main>
     </div>
   );

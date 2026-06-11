@@ -5,6 +5,7 @@ import fs from "fs";
 import https from "https";
 import path from "path";
 import express from "express";
+import Database from "better-sqlite3";
 
 import { App, ExpressAdapter, IPlugin } from "@microsoft/teams.apps";
 import { ConsoleLogger } from "@microsoft/teams.common/logging";
@@ -42,6 +43,21 @@ const app = new App({
 const expressApp = (adapter as any).express;
 
 expressApp.use(express.json());
+
+const db = new Database(path.join(process.cwd(), "coffee-talk.db"));
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS meetings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS meeting_participants (
+    meeting_id INTEGER NOT NULL REFERENCES meetings(id),
+    user_id    TEXT NOT NULL,
+    PRIMARY KEY (meeting_id, user_id)
+  );
+`);
 
 function graphIsConfigured() {
   const values = [
@@ -445,7 +461,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
-    const groups = createRandomGroups(members, min, max);
+    const pairs = getPairHistory(channelId);
+    const groups = createHistoryAwareGroups(members, min, max, pairs);
 
     const meetings: PlannedMeeting[] = [];
 
@@ -478,6 +495,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
         organizer
       );
+
+      recordMeeting(channelId, slot.availableParticipants);
 
       meetings.push({
         subject: event.subject,
@@ -542,7 +561,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
-    const groups = createRandomGroups(members, min, max);
+    const pairs = getPairHistory(channelId);
+    const groups = createHistoryAwareGroups(members, min, max, pairs);
 
     // The picked value (e.g. from <input type="datetime-local">) is a naive
     // wall clock the user means in `tz` — interpret it there, not server-local.
@@ -587,6 +607,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         tz,
         organizer
       );
+
+      recordMeeting(channelId, availableParticipants);
 
       meetings.push({
         subject: event.subject,
@@ -633,9 +655,39 @@ type PlannedMeeting = {
   webLink?: string;
 };
 
-function shuffle<T>(items: T[]): T[] {
-  return [...items].sort(() => Math.random() - 0.5);
+function getPairHistory(channelId: string): Set<string> {
+  const rows = db
+    .prepare(
+      `
+    SELECT a.user_id as user1, b.user_id as user2
+    FROM meeting_participants a
+    JOIN meeting_participants b ON a.meeting_id = b.meeting_id AND a.user_id < b.user_id
+    JOIN meetings m ON a.meeting_id = m.id
+    WHERE m.channel_id = ?
+  `,
+    )
+    .all(channelId) as { user1: string; user2: string }[];
+  return new Set(rows.map((r) => `${r.user1}:${r.user2}`));
 }
+
+const insertMeeting = db.prepare(
+  `INSERT INTO meetings (channel_id, created_at) VALUES (?, ?)`,
+);
+const insertParticipant = db.prepare(
+  `INSERT INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)`,
+);
+
+const recordMeeting = db.transaction(
+  (channelId: string, participants: ChannelMember[]) => {
+    const { lastInsertRowid } = insertMeeting.run(
+      channelId,
+      new Date().toISOString(),
+    );
+    for (const p of participants) {
+      if (p.userId) insertParticipant.run(lastInsertRowid, p.userId);
+    }
+  },
+);
 
 // Coerce the request's min/max group size into a valid range: min is at least 1
 // and max is never below min. Missing values fall back to pairs.
@@ -648,44 +700,74 @@ function normalizeGroupSize(
   return { min, max };
 }
 
-// Partition ALL usable members into as many meeting groups as possible, each
-// holding between minPerMeeting and maxPerMeeting people. We open the most
-// groups the minimum allows (floor(total / min)) and round-robin everyone into
-// them, capping each at the maximum. With evenly divisible numbers every group
-// gets the same size; otherwise the extra people are spread one per group up to
-// the cap. Anyone who can't fill a group of `min` is left out for this round.
-function createRandomGroups(
+function countRepeatedPairs(groups: ChannelMember[][], pairHistory: Set<string>): number {
+  let count = 0;
+  for (const group of groups) {
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const key = [group[i].userId!, group[j].userId!].sort().join(":");
+        if (pairHistory.has(key)) count++;
+      }
+    }
+  }
+  return count;
+}
+
+// Tries 200 random shuffles and returns the partition with the fewest repeated
+// pairs. A single greedy pass fails because the insertion order determines which
+// members share a group — trying many orderings and keeping the global minimum
+// consistently finds the best partition for small team sizes.
+function createHistoryAwareGroups(
   members: ChannelMember[],
   minPerMeeting: number,
-  maxPerMeeting: number
+  maxPerMeeting: number,
+  pairHistory: Set<string>,
 ): ChannelMember[][] {
-  const usableMembers = members.filter((m) => m.email);
-  const shuffled = shuffle(usableMembers);
+  const usable = members.filter((m) => m.email && m.userId);
+  const groupCount = Math.floor(usable.length / minPerMeeting);
+  if (groupCount === 0) return [];
 
-  const groupCount = Math.floor(shuffled.length / minPerMeeting);
-  if (groupCount === 0) {
-    return [];
+  let bestGroups: ChannelMember[][] = [];
+  let bestScore = Infinity;
+
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const shuffled = [...usable].sort(() => Math.random() - 0.5);
+    const groups: ChannelMember[][] = Array.from({ length: groupCount }, () => []);
+
+    for (const member of shuffled) {
+      let bestGroup = -1;
+      let bestGroupScore = Infinity;
+
+      for (let g = 0; g < groupCount; g++) {
+        if (groups[g].length >= maxPerMeeting) continue;
+
+        const repeatedPairs = groups[g].filter((existing) => {
+          const key = [existing.userId!, member.userId!].sort().join(":");
+          return pairHistory.has(key);
+        }).length;
+
+        const score = groups[g].length * 1000 + repeatedPairs;
+        if (score < bestGroupScore) {
+          bestGroupScore = score;
+          bestGroup = g;
+        }
+      }
+
+      if (bestGroup !== -1) groups[bestGroup].push(member);
+    }
+
+    const validGroups = groups.filter((g) => g.length >= minPerMeeting);
+    const score = countRepeatedPairs(validGroups, pairHistory);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestGroups = validGroups;
+    }
+
+    if (bestScore === 0) break;
   }
 
-  const groups: ChannelMember[][] = Array.from({ length: groupCount }, () => []);
-
-  let cursor = 0;
-  for (const member of shuffled) {
-    // Skip groups that already hit the maximum; stop once they are all full.
-    let scanned = 0;
-    while (scanned < groupCount && groups[cursor].length >= maxPerMeeting) {
-      cursor = (cursor + 1) % groupCount;
-      scanned++;
-    }
-    if (groups[cursor].length >= maxPerMeeting) {
-      break;
-    }
-
-    groups[cursor].push(member);
-    cursor = (cursor + 1) % groupCount;
-  }
-
-  return groups;
+  return bestGroups;
 }
 
 function addMinutes(date: Date, minutes: number): Date {

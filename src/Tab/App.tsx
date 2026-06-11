@@ -214,10 +214,7 @@ export default function App() {
 
         <section className="section">
           <h2>Channel users</h2>
-          <p className="muted">
-            This checks whether Graph access is configured. Until then, it will show the pending message.
-          </p>
-
+        
           <button className="primaryButton" onClick={loadChannelMembers} disabled={loadingMembers}>
             {loadingMembers && <span className="spinner" />}
             Show channel users

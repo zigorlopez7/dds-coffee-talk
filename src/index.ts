@@ -88,8 +88,6 @@ async function loadChannelMembers(
     .api(`/teams/${teamId}/channels/${channelId}/members`)
     .get();
 
-  console.log("Raw channel members:", JSON.stringify(result.value, null, 2));
-
   const members: ChannelMember[] = [];
 
   for (const member of result.value) {

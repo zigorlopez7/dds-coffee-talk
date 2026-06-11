@@ -30,6 +30,7 @@ export default function App() {
   const [maxPerMeeting, setMaxPerMeeting] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [startDateTime, setStartDateTime] = useState("");
+  const [endDateTime, setEndDateTime] = useState("");
   const [timeZone, setTimeZone] = useState("Europe/Madrid");
 
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -73,7 +74,7 @@ export default function App() {
         }
 
         setTeamsContext(context);
-        setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
+        setMessage('');
       } catch (error) {
         console.error(error);
         setMessage("Salute. Running outside Teams or Teams SDK failed.");
@@ -156,7 +157,7 @@ export default function App() {
   async function createMeetingsAtTime() {
     try {
       setLoadingAtTime(true);
-      setMessage("Preparing random meetings at the selected time...");
+      setMessage("Preparing random meetings within the selected day range...");
       setMeetings([]);
 
       const payload = {
@@ -166,6 +167,7 @@ export default function App() {
         maxPerMeeting,
         durationMinutes,
         startDateTime,
+        endDateTime,
         timeZone,
       };
 
@@ -278,14 +280,26 @@ export default function App() {
        
           </div>
 
-          <label>
-            Start date/time
-            <input
-              type="datetime-local"
-              value={startDateTime}
-              onChange={(e) => setStartDateTime(e.target.value)}
-            />
-          </label>
+          <div className="grid">
+            <label>
+              From day
+              <input
+                type="date"
+                value={startDateTime}
+                onChange={(e) => setStartDateTime(e.target.value)}
+              />
+            </label>
+
+            <label>
+              To day
+              <input
+                type="date"
+                min={startDateTime || undefined}
+                value={endDateTime}
+                onChange={(e) => setEndDateTime(e.target.value)}
+              />
+            </label>
+          </div>
 
           <div className="actions">
             <button className="primaryButton" onClick={createMeetingsNow} disabled={loadingNow}>
@@ -295,10 +309,15 @@ export default function App() {
             <button
               className="secondaryButton"
               onClick={createMeetingsAtTime}
-              disabled={!startDateTime || loadingAtTime}
+              disabled={
+                !startDateTime ||
+                !endDateTime ||
+                endDateTime < startDateTime ||
+                loadingAtTime
+              }
             >
               {loadingAtTime && <span className="spinner" />}
-              Create random meetings at selected time
+              Create random meetings in range
             </button>
           </div>
         </section>

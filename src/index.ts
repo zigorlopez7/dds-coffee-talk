@@ -150,26 +150,39 @@ async function getAvailableParticipants(
   });
 }
 
+// Slide a `durationMinutes` window across [window.start, window.end) in 30-min
+// steps and return the first slot where at least `minParticipants` are free.
+// When `enforceWorkingHours` is true the slot must also fall on a weekday
+// between 09:00 and 17:00 in `timeZone`; for an explicit user-picked range we
+// pass false so the whole range is honored as-is.
 async function findAvailableSlot(
   graphClient: Client,
   participants: ChannelMember[],
   durationMinutes: number,
   timeZone: string,
-  minParticipants: number
+  minParticipants: number,
+  window: { start: Date; end: Date },
+  enforceWorkingHours: boolean
 ): Promise<{ startDateTime: string; endDateTime: string; availableParticipants: ChannelMember[] } | null> {
-  const { start, end } = buildSearchWindowFromNow();
+  let cursor = new Date(window.start);
 
-  let cursor = new Date(start);
+  while (cursor < window.end) {
+    const slotEnd = addMinutes(cursor, durationMinutes);
 
-  while (cursor < end) {
-    const { weekday, hour } = getZonedParts(cursor, timeZone);
+    // The whole meeting must fit inside the window.
+    if (slotEnd > window.end) {
+      break;
+    }
 
-    const isWeekday = weekday !== 0 && weekday !== 6;
-    const isWorkingHour = hour >= 9 && hour < 17;
+    let acceptable = true;
+    if (enforceWorkingHours) {
+      const { weekday, hour } = getZonedParts(cursor, timeZone);
+      const isWeekday = weekday !== 0 && weekday !== 6;
+      const isWorkingHour = hour >= 9 && hour < 17;
+      acceptable = isWeekday && isWorkingHour;
+    }
 
-    if (isWeekday && isWorkingHour) {
-      const slotEnd = addMinutes(cursor, durationMinutes);
-
+    if (acceptable) {
       const startDateTime = toGraphDateTime(cursor, timeZone);
       const endDateTime = toGraphDateTime(slotEnd, timeZone);
 
@@ -345,7 +358,7 @@ async function generateMeetingContent(
       }),
     );
 
-    const raw = response.output?.message?.content?.find((b) => b.text)?.text;
+    const raw = response.output?.message?.content?.find((b: any) => b.text)?.text;
     const text = raw?.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
     if (text) {
       const missingNote =
@@ -456,7 +469,9 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         participants,
         Number(durationMinutes),
         timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
-        min
+        min,
+        buildSearchWindowFromNow(),
+        true
       );
 
       if (!slot) {
@@ -517,13 +532,14 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
       maxPerMeeting,
       durationMinutes,
       startDateTime,
+      endDateTime,
       timeZone,
     } = req.body;
 
-    if (!teamId || !channelId || !startDateTime) {
+    if (!teamId || !channelId || !startDateTime || !endDateTime) {
       return res.status(400).json({
         ok: false,
-        message: "Missing team/channel context or start date/time.",
+        message: "Missing team/channel context or start/end of the range.",
         meetings: [],
       });
     }
@@ -542,57 +558,74 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
+    // Inputs are day-only ("YYYY-MM-DD") in the user's tz. The range spans from
+    // the start of the first day to the end of the last (start of the day after
+    // endDate, exclusive). The 09:00–17:00 working-hour gate inside
+    // findAvailableSlot keeps slots within sensible hours of those days.
+    const rangeStart = zonedWallClockToInstant(`${startDateTime}T00:00`, tz);
+    const rangeEnd = addMinutes(
+      zonedWallClockToInstant(`${endDateTime}T00:00`, tz),
+      24 * 60
+    );
+
+    if (rangeEnd.getTime() <= rangeStart.getTime()) {
+      return res.status(400).json({
+        ok: false,
+        message: "The end day must be on or after the start day.",
+        meetings: [],
+      });
+    }
+
+    // Never search into the past — if the start day is today, begin from now.
+    const now = new Date();
+    const window = {
+      start: rangeStart.getTime() < now.getTime() ? now : rangeStart,
+      end: rangeEnd,
+    };
+
     const groups = createRandomGroups(members, min, max);
-
-    // The picked value (e.g. from <input type="datetime-local">) is a naive
-    // wall clock the user means in `tz` — interpret it there, not server-local.
-    const start = zonedWallClockToInstant(startDateTime, tz);
-    const end = addMinutes(start, Number(durationMinutes));
-
-    const startGraph = toGraphDateTime(start, tz);
-    const endGraph = toGraphDateTime(end, tz);
 
     const meetings: PlannedMeeting[] = [];
 
     for (let i = 0; i < groups.length; i++) {
       const participants = groups[i];
 
-      const availableParticipants = await getAvailableParticipants(
+      // Search inside the chosen days, restricted to working hours.
+      const slot = await findAvailableSlot(
         graphClient,
         participants,
-        startGraph,
-        endGraph,
+        Number(durationMinutes),
         tz,
-        Number(durationMinutes)
+        min,
+        window,
+        true
       );
 
-      if (availableParticipants.length < min) {
+      if (!slot) {
         meetings.push({
           subject: `DDS Coffee Talk #${i + 1}`,
           participants,
-          startDateTime: startGraph,
-          endDateTime: endGraph,
           status: "failed",
-          message: `Only ${availableParticipants.length} participant(s) available — need at least ${min}.`,
+          message: `No slot with at least ${min} participant(s) free in the selected range.`,
         });
         continue;
       }
 
       const event = await createCalendarEvent(
         graphClient,
-        availableParticipants,
+        slot.availableParticipants,
         `DDS Coffee Talk #${i + 1}`,
-        startGraph,
-        endGraph,
+        slot.startDateTime,
+        slot.endDateTime,
         tz,
         organizer
       );
 
       meetings.push({
         subject: event.subject,
-        participants: availableParticipants,
-        startDateTime: startGraph,
-        endDateTime: endGraph,
+        participants: slot.availableParticipants,
+        startDateTime: slot.startDateTime,
+        endDateTime: slot.endDateTime,
         status: "created",
         message: "Meeting created.",
         webLink: event.webLink,

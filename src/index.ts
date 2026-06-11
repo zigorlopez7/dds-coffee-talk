@@ -11,7 +11,7 @@ import { ConsoleLogger } from "@microsoft/teams.common/logging";
 import { DevtoolsPlugin } from "@microsoft/teams.dev";
 
 import { ClientSecretCredential } from "@azure/identity";
-import { Client } from "@microsoft/microsoft-graph-client";
+import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
@@ -118,9 +118,41 @@ async function loadChannelMembers(
     });
   }
 
-  return members.filter(
+  const allowed = members.filter(
     (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
   );
+
+  // Attach photos only for the members we keep, so we don't hit Graph for users
+  // we're about to discard.
+  for (const member of allowed) {
+    if (member.userId) {
+      member.photo = await getUserPhotoDataUri(graphClient, member.userId);
+    }
+  }
+
+  return allowed;
+}
+
+// Fetches a user's profile photo as a data URI ("data:image/jpeg;base64,...")
+// so the frontend can drop it straight into an <img src>. Returns undefined
+// when the user has no photo (Graph returns 404) or the lookup fails.
+async function getUserPhotoDataUri(
+  graphClient: Client,
+  userId: string
+): Promise<string | undefined> {
+  try {
+    const photo = await graphClient
+      .api(`/users/${userId}/photo/$value`)
+      .responseType(ResponseType.ARRAYBUFFER)
+      .get();
+
+    return `data:image/jpeg;base64,${Buffer.from(photo).toString("base64")}`;
+  } catch (error: any) {
+    if (error?.statusCode !== 404) {
+      console.warn(`Could not load photo for user ${userId}`, error);
+    }
+    return undefined;
+  }
 }
 
 async function getAvailableParticipants(
@@ -699,6 +731,7 @@ type ChannelMember = {
   userId?: string;
   displayName: string;
   email?: string;
+  photo?: string; // data URI of the user's profile photo, if any
 };
 
 type PlannedMeeting = {

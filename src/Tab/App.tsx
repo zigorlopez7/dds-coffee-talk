@@ -334,21 +334,6 @@ export default function App() {
             </div>
           </section>
         )}
-
-        <section className="debugBox">
-          <h3>Debug context</h3>
-          <pre>
-            {JSON.stringify(
-              {
-                teamId: teamsContext?.team?.groupId,
-                channelId: teamsContext?.channel?.id,
-                user: teamsContext?.user?.userPrincipalName,
-              },
-              null,
-              2
-            )}
-          </pre>
-        </section>
       </main>
     </div>
   );

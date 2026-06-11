@@ -154,7 +154,8 @@ async function findAvailableSlot(
   graphClient: Client,
   participants: ChannelMember[],
   durationMinutes: number,
-  timeZone: string
+  timeZone: string,
+  minParticipants: number
 ): Promise<{ startDateTime: string; endDateTime: string; availableParticipants: ChannelMember[] } | null> {
   const { start, end } = buildSearchWindowFromNow();
 
@@ -181,7 +182,7 @@ async function findAvailableSlot(
         durationMinutes
       );
 
-      if (availableParticipants.length >= 3) {
+      if (availableParticipants.length >= minParticipants) {
         return { startDateTime, endDateTime, availableParticipants };
       }
     }
@@ -325,7 +326,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         graphClient,
         participants,
         Number(durationMinutes),
-        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid"
+        timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid",
+        min
       );
 
       if (!slot) {
@@ -433,14 +435,14 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         Number(durationMinutes)
       );
 
-      if (availableParticipants.length < 3) {
+      if (availableParticipants.length < min) {
         meetings.push({
           subject: `DDS Coffee Talk #${i + 1}`,
           participants,
           startDateTime: startGraph,
           endDateTime: endGraph,
           status: "failed",
-          message: `Only ${availableParticipants.length} participant(s) available — need at least 3.`,
+          message: `Only ${availableParticipants.length} participant(s) available — need at least ${min}.`,
         });
         continue;
       }

@@ -26,8 +26,8 @@ export default function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
 
-  const [meetingCount, setMeetingCount] = useState(1);
-  const [participantsPerMeeting, setParticipantsPerMeeting] = useState(2);
+  const [minPerMeeting, setMinPerMeeting] = useState(2);
+  const [maxPerMeeting, setMaxPerMeeting] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [startDateTime, setStartDateTime] = useState("");
   const [timeZone, setTimeZone] = useState("Europe/Madrid");
@@ -113,8 +113,8 @@ export default function App() {
 
       const payload = {
         ...getTeamChannelPayload(),
-        meetingCount,
-        participantsPerMeeting,
+        minPerMeeting,
+        maxPerMeeting,
         durationMinutes,
         timeZone,
       };
@@ -144,8 +144,8 @@ export default function App() {
 
       const payload = {
         ...getTeamChannelPayload(),
-        meetingCount,
-        participantsPerMeeting,
+        minPerMeeting,
+        maxPerMeeting,
         durationMinutes,
         startDateTime,
         timeZone,
@@ -219,22 +219,22 @@ export default function App() {
 
           <div className="grid">
             <label>
-              Number of meetings
+              Min participants per meeting
               <input
                 type="number"
                 min={1}
-                value={meetingCount}
-                onChange={(e) => setMeetingCount(Number(e.target.value))}
+                value={minPerMeeting}
+                onChange={(e) => setMinPerMeeting(Number(e.target.value))}
               />
             </label>
 
             <label>
-              Participants per meeting
+              Max participants per meeting
               <input
                 type="number"
-                min={2}
-                value={participantsPerMeeting}
-                onChange={(e) => setParticipantsPerMeeting(Number(e.target.value))}
+                min={minPerMeeting}
+                value={maxPerMeeting}
+                onChange={(e) => setMaxPerMeeting(Number(e.target.value))}
               />
             </label>
 

@@ -288,8 +288,8 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
     const {
       teamId,
       channelId,
-      meetingCount,
-      participantsPerMeeting,
+      minPerMeeting,
+      maxPerMeeting,
       durationMinutes,
       timeZone,
     } = req.body;
@@ -311,14 +311,11 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
       });
     }
 
+    const { min, max } = normalizeGroupSize(minPerMeeting, maxPerMeeting);
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
-    const groups = createRandomGroups(
-      members,
-      Number(meetingCount),
-      Number(participantsPerMeeting)
-    );
+    const groups = createRandomGroups(members, min, max);
 
     const meetings: PlannedMeeting[] = [];
 
@@ -383,8 +380,8 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const {
       teamId,
       channelId,
-      meetingCount,
-      participantsPerMeeting,
+      minPerMeeting,
+      maxPerMeeting,
       durationMinutes,
       startDateTime,
       timeZone,
@@ -407,15 +404,12 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
       });
     }
 
+    const { min, max } = normalizeGroupSize(minPerMeeting, maxPerMeeting);
     const tz = timeZone || process.env.DEFAULT_TIME_ZONE || "Europe/Madrid";
     const graphClient = await getGraphClient();
     const members = await loadChannelMembers(graphClient, teamId, channelId);
 
-    const groups = createRandomGroups(
-      members,
-      Number(meetingCount),
-      Number(participantsPerMeeting)
-    );
+    const groups = createRandomGroups(members, min, max);
 
     // The picked value (e.g. from <input type="datetime-local">) is a naive
     // wall clock the user means in `tz` — interpret it there, not server-local.
@@ -509,26 +503,52 @@ function shuffle<T>(items: T[]): T[] {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
+// Coerce the request's min/max group size into a valid range: min is at least 1
+// and max is never below min. Missing values fall back to pairs.
+function normalizeGroupSize(
+  minPerMeeting: unknown,
+  maxPerMeeting: unknown
+): { min: number; max: number } {
+  const min = Math.max(1, Number(minPerMeeting) || 2);
+  const max = Math.max(min, Number(maxPerMeeting) || min);
+  return { min, max };
+}
+
+// Partition ALL usable members into as many meeting groups as possible, each
+// holding between minPerMeeting and maxPerMeeting people. We open the most
+// groups the minimum allows (floor(total / min)) and round-robin everyone into
+// them, capping each at the maximum. With evenly divisible numbers every group
+// gets the same size; otherwise the extra people are spread one per group up to
+// the cap. Anyone who can't fill a group of `min` is left out for this round.
 function createRandomGroups(
   members: ChannelMember[],
-  meetingCount: number,
-  participantsPerMeeting: number
+  minPerMeeting: number,
+  maxPerMeeting: number
 ): ChannelMember[][] {
   const usableMembers = members.filter((m) => m.email);
   const shuffled = shuffle(usableMembers);
 
-  const groups: ChannelMember[][] = [];
-  let index = 0;
+  const groupCount = Math.floor(shuffled.length / minPerMeeting);
+  if (groupCount === 0) {
+    return [];
+  }
 
-  for (let i = 0; i < meetingCount; i++) {
-    const group = shuffled.slice(index, index + participantsPerMeeting);
+  const groups: ChannelMember[][] = Array.from({ length: groupCount }, () => []);
 
-    if (group.length < participantsPerMeeting) {
+  let cursor = 0;
+  for (const member of shuffled) {
+    // Skip groups that already hit the maximum; stop once they are all full.
+    let scanned = 0;
+    while (scanned < groupCount && groups[cursor].length >= maxPerMeeting) {
+      cursor = (cursor + 1) % groupCount;
+      scanned++;
+    }
+    if (groups[cursor].length >= maxPerMeeting) {
       break;
     }
 
-    groups.push(group);
-    index += participantsPerMeeting;
+    groups[cursor].push(member);
+    cursor = (cursor + 1) % groupCount;
   }
 
   return groups;

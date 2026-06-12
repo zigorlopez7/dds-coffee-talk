@@ -117,7 +117,7 @@ async function loadChannelMembers(
   channelId: string,
 ): Promise<ChannelMember[]> {
   const result = await graphClient
-    .api(`/teams/${teamId}/channels/${channelId}/members`)
+    .api(`/teams/${teamId}/channels/${channelId}/members?$top=200`)
     .get();
 
   const members: ChannelMember[] = result.value;

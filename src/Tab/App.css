@@ -203,18 +203,16 @@ button:disabled {
 }
 
 .userGrid {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  align-items: flex-start;
-  align-self: flex-start;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 52px;
   gap: 12px;
   margin-top: 16px;
 }
 
 .userCard {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: 28px 1fr;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -222,36 +220,23 @@ button:disabled {
   border-radius: 10px;
   background: #ffffff;
   transition: border-color 0.2s ease;
-  flex-grow: 0;
-  flex-shrink: 0;
-  flex-basis: auto;
-  width: fit-content;
+  overflow: hidden;
 }
 
 .userAvatar {
   width: 28px;
   height: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  max-width: 28px;
-  max-height: 28px;
   border-radius: 50%;
   overflow: hidden;
   background: var(--dehn-grey);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  display: grid;
+  place-items: center;
 }
 
 .userAvatar img {
   display: block;
   width: 28px;
   height: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  max-width: 28px;
-  max-height: 28px;
   object-fit: cover;
   border-radius: 50%;
 }
@@ -265,9 +250,17 @@ button:disabled {
 }
 
 .userCardInfo {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 2px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.userCardInfo strong,
+.userCardInfo span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .userCard:hover {

@@ -3,6 +3,30 @@ import * as teamsJs from "@microsoft/teams-js";
 
 import "./App.css";
 
+function getInitials(displayName: string) {
+  const parts = displayName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function UserCard({ member }: { member: { displayName: string; email?: string; photo?: string } }) {
+  return (
+    <div className="userCard">
+      <div className="userAvatar">
+        {member.photo ? (
+          <img width={96} height={96} src={member.photo} alt={member.displayName} className="userAvatarImg" />
+        ) : (
+          <div className="userAvatarInitials">{getInitials(member.displayName)}</div>
+        )}
+      </div>
+      <div className="userCardInfo">
+        <strong>{member.displayName}</strong>
+        {member.email && <span>{member.email}</span>}
+      </div>
+    </div>
+  );
+}
+
 type Member = {
   id?: string;
   userId?: string;
@@ -75,7 +99,7 @@ export default function App() {
         }
 
         setTeamsContext(context);
-        setMessage(`Salute. DDS Coffee Talk is running in ${context.app.host.name}.`);
+        setMessage('');
       } catch (error) {
         console.error(error);
         setMessage("Salute. Running outside Teams or Teams SDK failed.");
@@ -120,7 +144,40 @@ export default function App() {
     }
   }
 
+  const MOCK_MEETINGS: Meeting[] = [
+    {
+      subject: "DDS Coffee Talk #1",
+      status: "created",
+      message: "Meeting created.",
+      startDateTime: new Date(Date.now() + 86400000).toISOString(),
+      endDateTime: new Date(Date.now() + 86400000 + 1800000).toISOString(),
+      webLink: "#",
+      participants: [
+        { displayName: "Rasciel Villegas", email: "rasciel.villegas@dehn.de" },
+        { displayName: "Jose Ruano Fernández", email: "Jose.Ruano@dehn.de" },
+        { displayName: "Borja Giráldez González", email: "borja.giraldez@dehn.de" },
+      ],
+    },
+    {
+      subject: "DDS Coffee Talk #2",
+      status: "created",
+      message: "Meeting created.",
+      startDateTime: new Date(Date.now() + 172800000).toISOString(),
+      endDateTime: new Date(Date.now() + 172800000 + 1800000).toISOString(),
+      webLink: "#",
+      participants: [
+        { displayName: "Alberto García Reino", email: "Alberto.Reino@dehn.de" },
+        { displayName: "Zigor López", email: "Zigor.Lopez@dehn.de" },
+      ],
+    },
+  ];
+
   async function createMeetingsNow() {
+    // TODO: remove mock
+    setMessage("Mock meetings loaded.");
+    setMeetings(MOCK_MEETINGS);
+    return;
+
     try {
       setLoadingNow(true);
       setMessage("Preparing random meetings based on availability...");
@@ -144,6 +201,8 @@ export default function App() {
       });
 
       const data = await response.json();
+
+      console.log('DATA: ', data)
 
       setMessage(data.message);
       setMeetings(data.meetings || []);
@@ -197,10 +256,7 @@ export default function App() {
       <main className="card">
         <header className="hero">
           <div>
-            <p className="eyebrow">
-              DEHN Internal Tool
-            </p>
-
+           
             <h1>DDS Coffee Talk</h1>
 
             <p className="subtitle">
@@ -210,31 +266,27 @@ export default function App() {
           </div>
         </header>
 
-        <section className="statusBox">
-          <strong>Status</strong>
-          <p>{message}</p>
-        </section>
+        {message && (
+          <section className="statusBox">
+            <strong>Status</strong>
+            <p>{message}</p>
+          </section>
+        )}
 
         <section className="section">
           <h2>Channel users</h2>
-          <p className="muted">
-            This checks whether Graph access is configured. Until then, it will show the pending message.
-          </p>
-
+        
           <button className="primaryButton" onClick={loadChannelMembers} disabled={loadingMembers}>
             {loadingMembers && <span className="spinner" />}
             Show channel users
           </button>
 
           {members.length > 0 && (
-            <ul className="list">
+            <div className="userGrid">
               {members.map((member, index) => (
-                <li key={member.userId || member.id || index}>
-                  <strong>{member.displayName}</strong>
-                  {member.email && <span>{member.email}</span>}
-                </li>
+                <UserCard key={member.userId || member.id || index} member={member} />
               ))}
-            </ul>
+            </div>
           )}
         </section>
 
@@ -284,19 +336,8 @@ export default function App() {
           </div>
 
           <div className="actions">
-            <button className="primaryButton" onClick={createMeetingsNow} disabled={loadingNow}>
-              {loadingNow && <span className="spinner" />}
-              Create random meetings now
-            </button>
+       
           </div>
-        </section>
-
-        <section className="section">
-          <h2>Schedule within a day range</h2>
-          <p className="muted">
-            Meetings are placed during working hours (09:00–17:00) on any day in
-            this range, wherever enough participants are free.
-          </p>
 
           <div className="grid">
             <label>
@@ -320,6 +361,10 @@ export default function App() {
           </div>
 
           <div className="actions">
+            <button className="primaryButton" onClick={createMeetingsNow} disabled={loadingNow}>
+              {loadingNow && <span className="spinner" />}
+              Create random meetings now
+            </button>
             <button
               className="secondaryButton"
               onClick={createMeetingsAtTime}
@@ -336,6 +381,8 @@ export default function App() {
           </div>
         </section>
 
+  
+
         {meetings.length > 0 && (
           <section className="section">
             <h2>Meeting results</h2>
@@ -343,7 +390,7 @@ export default function App() {
             <div className="meetingList">
               {meetings.map((meeting, index) => (
                 <article className="meetingCard" key={index}>
-                  <div>
+                  <div className="meetingCardHeader">
                     <strong>{meeting.subject}</strong>
                     <span className={`pill ${meeting.status}`}>
                       {meeting.status}
@@ -358,13 +405,11 @@ export default function App() {
                     </p>
                   )}
 
-                  <ul>
+                  <div className="userGrid">
                     {meeting.participants.map((participant, i) => (
-                      <li key={participant.userId || participant.email || i}>
-                        {participant.displayName}
-                      </li>
+                      <UserCard key={participant.userId || participant.email || i} member={participant} />
                     ))}
-                  </ul>
+                  </div>
 
                   {meeting.webLink && (
                     <a href={meeting.webLink} target="_blank" rel="noreferrer">

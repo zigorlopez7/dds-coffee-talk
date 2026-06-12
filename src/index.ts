@@ -12,12 +12,19 @@ import { DevtoolsPlugin } from "@microsoft/teams.dev";
 
 import { ClientSecretCredential } from "@azure/identity";
 import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import {
+  BedrockRuntimeClient,
+  ConverseCommand,
+} from "@aws-sdk/client-bedrock-runtime";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
 const sslOptions = {
-  key: process.env.SSL_KEY_FILE ? fs.readFileSync(process.env.SSL_KEY_FILE) : undefined,
-  cert: process.env.SSL_CRT_FILE ? fs.readFileSync(process.env.SSL_CRT_FILE) : undefined,
+  key: process.env.SSL_KEY_FILE
+    ? fs.readFileSync(process.env.SSL_KEY_FILE)
+    : undefined,
+  cert: process.env.SSL_CRT_FILE
+    ? fs.readFileSync(process.env.SSL_CRT_FILE)
+    : undefined,
 };
 
 const adapter = new ExpressAdapter();
@@ -50,19 +57,19 @@ function graphIsConfigured() {
     process.env.AAD_APP_CLIENT_SECRET,
   ];
 
-  return values.every(
-    (value) => value && !value.includes("REPLACE_WITH")
-  );
+  return values.every((value) => value && !value.includes("REPLACE_WITH"));
 }
 
 async function getGraphClient() {
   const credential = new ClientSecretCredential(
     process.env.AAD_APP_TENANT_ID!,
     process.env.AAD_APP_CLIENT_ID!,
-    process.env.AAD_APP_CLIENT_SECRET!
+    process.env.AAD_APP_CLIENT_SECRET!,
   );
 
-  const token = await credential.getToken("https://graph.microsoft.com/.default");
+  const token = await credential.getToken(
+    "https://graph.microsoft.com/.default",
+  );
 
   return Client.init({
     authProvider: (done) => {
@@ -82,44 +89,16 @@ const ALLOWED_EMAILS = new Set([
 async function loadChannelMembers(
   graphClient: Client,
   teamId: string,
-  channelId: string
+  channelId: string,
 ): Promise<ChannelMember[]> {
   const result = await graphClient
     .api(`/teams/${teamId}/channels/${channelId}/members`)
     .get();
 
-  const members: ChannelMember[] = [];
-
-  for (const member of result.value) {
-    const userId = member.userId;
-
-    let email: string | undefined;
-    let displayName = member.displayName || "Unnamed user";
-
-    if (userId) {
-      try {
-        const user = await graphClient
-          .api(`/users/${userId}`)
-          .select("id,displayName,mail,userPrincipalName")
-          .get();
-
-        displayName = user.displayName || displayName;
-        email = user.mail || user.userPrincipalName;
-      } catch (error) {
-        console.warn(`Could not load user details for ${displayName}`, error);
-      }
-    }
-
-    members.push({
-      id: member.id,
-      userId,
-      displayName,
-      email,
-    });
-  }
+  const members: ChannelMember[] = result.value;
 
   const allowed = members.filter(
-    (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase())
+    (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase()),
   );
 
   // Attach photos only for the members we keep, so we don't hit Graph for users
@@ -138,7 +117,7 @@ async function loadChannelMembers(
 // when the user has no photo (Graph returns 404) or the lookup fails.
 async function getUserPhotoDataUri(
   graphClient: Client,
-  userId: string
+  userId: string,
 ): Promise<string | undefined> {
   try {
     const photo = await graphClient
@@ -161,7 +140,7 @@ async function getAvailableParticipants(
   startDateTime: string,
   endDateTime: string,
   timeZone: string,
-  durationMinutes: number
+  durationMinutes: number,
 ): Promise<ChannelMember[]> {
   const caller = participants.find((p) => p.userId) ?? participants[0];
 
@@ -207,7 +186,7 @@ async function findAvailableSlot(
   minParticipants: number,
   window: { start: Date; end: Date },
   enforceWorkingHours: boolean,
-  bookedIntervals: { start: number; end: number }[]
+  bookedIntervals: { start: number; end: number }[],
 ): Promise<Slot | null> {
   let cursor = new Date(window.start);
   let best: Slot | null = null;
@@ -249,20 +228,33 @@ async function findAvailableSlot(
         startDateTime,
         endDateTime,
         timeZone,
-        durationMinutes
+        durationMinutes,
       );
 
       // Everyone is free here — can't do better, take it now.
       if (availableParticipants.length === participants.length) {
-        return { startDateTime, endDateTime, availableParticipants, startMs: slotStartMs, endMs: slotEndMs };
+        return {
+          startDateTime,
+          endDateTime,
+          availableParticipants,
+          startMs: slotStartMs,
+          endMs: slotEndMs,
+        };
       }
 
       // Otherwise remember the slot that keeps the most people (still >= min).
       if (
         availableParticipants.length >= minParticipants &&
-        (!best || availableParticipants.length > best.availableParticipants.length)
+        (!best ||
+          availableParticipants.length > best.availableParticipants.length)
       ) {
-        best = { startDateTime, endDateTime, availableParticipants, startMs: slotStartMs, endMs: slotEndMs };
+        best = {
+          startDateTime,
+          endDateTime,
+          availableParticipants,
+          startMs: slotStartMs,
+          endMs: slotEndMs,
+        };
       }
     }
 
@@ -279,7 +271,7 @@ async function createCalendarEvent(
   startDateTime: string,
   endDateTime: string,
   timeZone: string,
-  organizerEmail: string
+  organizerEmail: string,
 ) {
   const attendees = participants.map((p) => ({
     emailAddress: {
@@ -291,26 +283,24 @@ async function createCalendarEvent(
 
   const bodyContent = await generateMeetingContent(participants);
 
-  return graphClient
-    .api(`/users/${organizerEmail}/events`)
-    .post({
-      subject,
-      body: {
-        contentType: "HTML",
-        content: bodyContent,
-      },
-      start: {
-        dateTime: startDateTime,
-        timeZone,
-      },
-      end: {
-        dateTime: endDateTime,
-        timeZone,
-      },
-      attendees,
-      isOnlineMeeting: true,
-      onlineMeetingProvider: "teamsForBusiness",
-    });
+  return graphClient.api(`/users/${organizerEmail}/events`).post({
+    subject,
+    body: {
+      contentType: "HTML",
+      content: bodyContent,
+    },
+    start: {
+      dateTime: startDateTime,
+      timeZone,
+    },
+    end: {
+      dateTime: endDateTime,
+      timeZone,
+    },
+    attendees,
+    isOnlineMeeting: true,
+    onlineMeetingProvider: "teamsForBusiness",
+  });
 }
 
 async function fetchParticipantProfiles(
@@ -424,8 +414,13 @@ async function generateMeetingContent(
       }),
     );
 
-    const raw = response.output?.message?.content?.find((b: any) => b.text)?.text;
-    const text = raw?.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/i, "").trim();
+    const raw = response.output?.message?.content?.find(
+      (b: any) => b.text,
+    )?.text;
+    const text = raw
+      ?.replace(/^```[a-z]*\n?/i, "")
+      .replace(/\n?```$/i, "")
+      .trim();
     if (text) {
       const missingNote =
         missingProfiles.length > 0
@@ -455,7 +450,8 @@ expressApp.post("/api/channel-members", async (req: any, res: any) => {
     if (!teamId || !channelId) {
       return res.status(400).json({
         ok: false,
-        message: "Open the app as a channel tab to get team and channel context.",
+        message:
+          "Open the app as a channel tab to get team and channel context.",
         members: [],
       });
     }
@@ -484,7 +480,8 @@ expressApp.post("/api/channel-members", async (req: any, res: any) => {
     return res.status(500).json({
       ok: false,
       graphConfigured: true,
-      message: "Graph call failed. Check permissions, tenant, secret, and admin consent.",
+      message:
+        "Graph call failed. Check permissions, tenant, secret, and admin consent.",
       error: error.message,
       members: [],
     });
@@ -542,7 +539,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         min,
         window,
         true,
-        bookedIntervals
+        bookedIntervals,
       );
 
       if (!slot) {
@@ -564,7 +561,7 @@ expressApp.post("/api/random-meetings/now", async (req: any, res: any) => {
         slot.startDateTime,
         slot.endDateTime,
         tz,
-        organizer
+        organizer,
       );
 
       meetings.push({
@@ -638,7 +635,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
     const rangeStart = zonedWallClockToInstant(`${startDateTime}T00:00`, tz);
     const rangeEnd = addMinutes(
       zonedWallClockToInstant(`${endDateTime}T00:00`, tz),
-      24 * 60
+      24 * 60,
     );
 
     if (rangeEnd.getTime() <= rangeStart.getTime()) {
@@ -673,7 +670,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         min,
         window,
         true,
-        bookedIntervals
+        bookedIntervals,
       );
 
       if (!slot) {
@@ -695,7 +692,7 @@ expressApp.post("/api/random-meetings/at-time", async (req: any, res: any) => {
         slot.startDateTime,
         slot.endDateTime,
         tz,
-        organizer
+        organizer,
       );
 
       meetings.push({
@@ -752,7 +749,7 @@ function shuffle<T>(items: T[]): T[] {
 // and max is never below min. Missing values fall back to pairs.
 function normalizeGroupSize(
   minPerMeeting: unknown,
-  maxPerMeeting: unknown
+  maxPerMeeting: unknown,
 ): { min: number; max: number } {
   const min = Math.max(1, Number(minPerMeeting) || 2);
   const max = Math.max(min, Number(maxPerMeeting) || min);
@@ -768,7 +765,7 @@ function normalizeGroupSize(
 function createRandomGroups(
   members: ChannelMember[],
   minPerMeeting: number,
-  maxPerMeeting: number
+  maxPerMeeting: number,
 ): ChannelMember[][] {
   const usableMembers = members.filter((m) => m.email);
   const shuffled = shuffle(usableMembers);
@@ -778,7 +775,10 @@ function createRandomGroups(
     return [];
   }
 
-  const groups: ChannelMember[][] = Array.from({ length: groupCount }, () => []);
+  const groups: ChannelMember[][] = Array.from(
+    { length: groupCount },
+    () => [],
+  );
 
   let cursor = 0;
   for (const member of shuffled) {
@@ -836,7 +836,13 @@ function getZonedParts(date: Date, timeZone: string): ZonedParts {
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
 
   const weekdayMap: Record<string, number> = {
-    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
   };
 
   return {
@@ -862,7 +868,14 @@ function toGraphDateTime(date: Date, timeZone: string): string {
 // Offset (ms) at `date` such that instant = (wall clock read as UTC) - offset.
 function timeZoneOffsetMs(date: Date, timeZone: string): number {
   const p = getZonedParts(date, timeZone);
-  const wallClockAsUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const wallClockAsUTC = Date.UTC(
+    p.year,
+    p.month - 1,
+    p.day,
+    p.hour,
+    p.minute,
+    p.second,
+  );
   return wallClockAsUTC - date.getTime();
 }
 

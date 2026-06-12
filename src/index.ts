@@ -763,19 +763,22 @@ type PlannedMeeting = {
   webLink?: string;
 };
 
-function getPairHistory(channelId: string): Set<string> {
+function getPairHistory(channelId: string): Map<string, number> {
+  const since = new Date();
+  since.setMonth(since.getMonth() - 6);
   const rows = db
     .prepare(
       `
-    SELECT a.user_id as user1, b.user_id as user2
+    SELECT a.user_id as user1, b.user_id as user2, COUNT(*) as count
     FROM meeting_participants a
     JOIN meeting_participants b ON a.meeting_id = b.meeting_id AND a.user_id < b.user_id
     JOIN meetings m ON a.meeting_id = m.id
-    WHERE m.channel_id = ?
+    WHERE m.channel_id = ? AND m.created_at >= ?
+    GROUP BY a.user_id, b.user_id
   `,
     )
-    .all(channelId) as { user1: string; user2: string }[];
-  return new Set(rows.map((r) => `${r.user1}:${r.user2}`));
+    .all(channelId, since.toISOString()) as { user1: string; user2: string; count: number }[];
+  return new Map(rows.map((r) => [`${r.user1}:${r.user2}`, r.count]));
 }
 
 const insertMeeting = db.prepare(
@@ -808,13 +811,13 @@ function normalizeGroupSize(
   return { min, max };
 }
 
-function countRepeatedPairs(groups: ChannelMember[][], pairHistory: Set<string>): number {
+function countRepeatedPairs(groups: ChannelMember[][], pairHistory: Map<string, number>): number {
   let count = 0;
   for (const group of groups) {
     for (let i = 0; i < group.length; i++) {
       for (let j = i + 1; j < group.length; j++) {
         const key = [group[i].userId!, group[j].userId!].sort().join(":");
-        if (pairHistory.has(key)) count++;
+        count += pairHistory.get(key) ?? 0;
       }
     }
   }
@@ -822,17 +825,20 @@ function countRepeatedPairs(groups: ChannelMember[][], pairHistory: Set<string>)
 }
 
 // Tries 200 random shuffles and returns the partition with the fewest repeated
-// pairs. A single greedy pass fails because the insertion order determines which
-// members share a group — trying many orderings and keeping the global minimum
-// consistently finds the best partition for small team sizes.
+// pairs. The inner loop is a plain round-robin (assign to the smallest group);
+// the outer shuffle is what drives pair quality — the outer loop evaluates each
+// partition via countRepeatedPairs and keeps the global minimum.
 function createHistoryAwareGroups(
   members: ChannelMember[],
   minPerMeeting: number,
   maxPerMeeting: number,
-  pairHistory: Set<string>,
+  pairHistory: Map<string, number>,
 ): ChannelMember[][] {
   const usable = members.filter((m) => m.email && m.userId);
-  const groupCount = Math.floor(usable.length / minPerMeeting);
+  // ceil(n/max) guarantees total capacity >= n, so no member is ever skipped
+  // during greedy assignment (the old floor(n/min) fell short when min === max
+  // and n was not evenly divisible).
+  const groupCount = Math.ceil(usable.length / maxPerMeeting);
   if (groupCount === 0) return [];
 
   let bestGroups: ChannelMember[][] = [];
@@ -844,19 +850,12 @@ function createHistoryAwareGroups(
 
     for (const member of shuffled) {
       let bestGroup = -1;
-      let bestGroupScore = Infinity;
+      let bestGroupSize = Infinity;
 
       for (let g = 0; g < groupCount; g++) {
         if (groups[g].length >= maxPerMeeting) continue;
-
-        const repeatedPairs = groups[g].filter((existing) => {
-          const key = [existing.userId!, member.userId!].sort().join(":");
-          return pairHistory.has(key);
-        }).length;
-
-        const score = groups[g].length * 1000 + repeatedPairs;
-        if (score < bestGroupScore) {
-          bestGroupScore = score;
+        if (groups[g].length < bestGroupSize) {
+          bestGroupSize = groups[g].length;
           bestGroup = g;
         }
       }
@@ -864,12 +863,33 @@ function createHistoryAwareGroups(
       if (bestGroup !== -1) groups[bestGroup].push(member);
     }
 
-    const validGroups = groups.filter((g) => g.length >= minPerMeeting);
-    const score = countRepeatedPairs(validGroups, pairHistory);
+    // Separate complete groups from undersized ones, then absorb the leftovers
+    // into the best-scoring complete group rather than dropping them silently.
+    const complete: ChannelMember[][] = [];
+    const leftover: ChannelMember[] = [];
+    for (const g of groups) {
+      if (g.length >= minPerMeeting) complete.push(g);
+      else leftover.push(...g);
+    }
+    for (const member of leftover) {
+      let target = -1;
+      let targetScore = Infinity;
+      for (let g = 0; g < complete.length; g++) {
+        const repeats = complete[g].reduce((sum, existing) => {
+          const key = [existing.userId!, member.userId!].sort().join(":");
+          return sum + (pairHistory.get(key) ?? 0);
+        }, 0);
+        const s = complete[g].length * 1000 + repeats;
+        if (s < targetScore) { targetScore = s; target = g; }
+      }
+      if (target !== -1) complete[target].push(member);
+    }
+
+    const score = countRepeatedPairs(complete, pairHistory);
 
     if (score < bestScore) {
       bestScore = score;
-      bestGroups = validGroups;
+      bestGroups = complete;
     }
 
     if (bestScore === 0) break;

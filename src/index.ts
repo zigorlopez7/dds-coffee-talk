@@ -100,6 +100,15 @@ const ALLOWED_EMAILS = new Set([
   "rasciel.villegas@dehn.de",
   "zigor.lopez@dehn.de",
   "jose.ruano@dehn.de",
+  "victor.cabrita@dehn.de",
+  "juan.laranjeira@dehn.de",
+  "angel.hodar@dehn.de",
+  "ana.salamero@dehn.de",
+  "pablo.lopez@dehn.de",
+  "dominik.donauer@dehn.de",
+  "udo.jansohn@dehn.de",
+  "ivan.palleiro@dehn.de",
+  "daniel.nowakowski@dehn.de"
 ]);
 
 async function loadChannelMembers(

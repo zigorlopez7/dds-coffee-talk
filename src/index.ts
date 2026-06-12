@@ -117,13 +117,13 @@ async function loadChannelMembers(
     (m) => m.email && ALLOWED_EMAILS.has(m.email.toLowerCase()),
   );
 
-  // Attach photos only for the members we keep, so we don't hit Graph for users
-  // we're about to discard.
-  for (const member of allowed) {
-    if (member.userId) {
-      member.photo = await getUserPhotoDataUri(graphClient, member.userId);
-    }
-  }
+  await Promise.all(
+    allowed.map(async (member) => {
+      if (member.userId) {
+        member.photo = await getUserPhotoDataUri(graphClient, member.userId);
+      }
+    }),
+  );
 
   return allowed;
 }

@@ -174,9 +174,9 @@ export default function App() {
 
   async function createMeetingsNow() {
     // TODO: remove mock
-    setMessage("Mock meetings loaded.");
-    setMeetings(MOCK_MEETINGS);
-    return;
+    // setMessage("Mock meetings loaded.");
+    // setMeetings(MOCK_MEETINGS);
+    // return;
 
     try {
       setLoadingNow(true);
